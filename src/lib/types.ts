@@ -44,6 +44,23 @@ export interface TeamConfig {
 
 export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
 
+export interface TaskLinkage {
+    taskId: string;
+    slackChannelId?: string;
+    slackThreadTs?: string;
+    linearIssueId?: string;
+    linearIssueIdentifier?: string;
+    linearIssueUrl?: string;
+    gitProvider?: string;
+    repo?: string;
+    baseBranch?: string;
+    workingBranch?: string;
+    pullRequestNumber?: number;
+    pullRequestUrl?: string;
+    currentOwnerAgentId?: string;
+    status?: TaskStatus;
+}
+
 export interface Task {
     id: string;
     title: string;
@@ -53,6 +70,7 @@ export interface Task {
     assigneeType: 'agent' | 'team' | '';
     createdAt: number;
     updatedAt: number;
+    linkage?: TaskLinkage;
 }
 
 export interface ChainStep {
@@ -164,6 +182,7 @@ export interface Conversation {
         sequence: string[];
         currentIndex: number;
     };
+    taskId?: string;
 }
 
 export interface ResponseData {

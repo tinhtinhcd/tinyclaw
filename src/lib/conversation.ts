@@ -219,7 +219,11 @@ export function completeConversation(conv: Conversation): void {
         messageId: conv.messageId,
         agent: finalAgentId,
         files: allFiles.length > 0 ? allFiles : undefined,
-        metadata: finalAgentId ? { agentId: finalAgentId, teamId: conv.teamContext.teamId } : { teamId: conv.teamContext.teamId },
+        metadata: {
+            ...(finalAgentId ? { agentId: finalAgentId } : {}),
+            teamId: conv.teamContext.teamId,
+            ...(conv.taskId ? { taskId: conv.taskId } : {}),
+        },
     });
 
     log('INFO', `✓ Response ready [${conv.channel}] ${conv.sender} (${finalResponse.length} chars)`);

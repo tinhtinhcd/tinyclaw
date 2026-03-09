@@ -23,6 +23,7 @@ import {
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
+import { emitTinyEvent, errorTinyEvent, warnTinyEvent } from './lib/observability';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions, extractChatRoomMessages } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
 import { loadPlugins, runIncomingHooks, runOutgoingHooks } from './lib/plugins';
@@ -38,6 +39,23 @@ import {
     withConversationLock, incrementPending, decrementPending,
     postToChatRoom,
 } from './lib/conversation';
+import {
+    createTaskLinkage,
+    getTaskLinkage,
+    getTaskLinkageBySlackThread,
+    attachGitBranch,
+    attachPullRequest,
+} from './lib/task-linkage';
+import {
+    applyRoleTaskLinkageState,
+    applyTaskLinkageCommands,
+    buildRoleFetchedPrContext,
+    buildTaskLinkageContext,
+    detectWorkflowRole,
+    TaskLinkageExecutionDeps,
+    WorkflowRole,
+} from './lib/task-linkage-workflow';
+import { getCodingWorker } from './integrations/coder/coder-worker';
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -72,7 +90,23 @@ function getDevPipelineSequence(team: TeamConfig, agents: Record<string, AgentCo
 }
 
 // Process one or more batched messages for an agent
-async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []): Promise<void> {
+interface ProcessMessageOverrides {
+    invokeAgentFn?: typeof invokeAgent;
+    runIncomingHooksFn?: typeof runIncomingHooks;
+    runOutgoingHooksFn?: typeof runOutgoingHooks;
+    taskLinkageExecutionDeps?: TaskLinkageExecutionDeps;
+    fetchReviewerPrContextFn?: (
+        taskId: string,
+        role: WorkflowRole,
+        log: (level: string, msg: string) => void,
+    ) => Promise<string>;
+}
+
+async function processMessage(
+    dbMsg: DbMessage,
+    additionalMsgs: DbMessage[] = [],
+    overrides: ProcessMessageOverrides = {},
+): Promise<void> {
     try {
         const channel = dbMsg.channel;
         const sender = dbMsg.sender;
@@ -172,6 +206,75 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
             fs.unlinkSync(agentResetFlag);
         }
 
+        let linkedTaskId: string | undefined;
+        // For internal messages, reuse linkage from the parent conversation.
+        if (isInternal && messageData.conversationId) {
+            const conv = conversations.get(messageData.conversationId);
+            if (conv?.taskId) linkedTaskId = conv.taskId;
+        }
+
+        // For Slack threads, map one thread -> one backend task linkage.
+        if (!isInternal && messageData.channel === 'slack') {
+            try {
+                const md = messageData.sourceMetadata || {};
+                const slackChannelId = typeof md.channelId === 'string' ? md.channelId : '';
+                const slackThreadTs = typeof md.threadTs === 'string' ? md.threadTs : '';
+                if (slackChannelId && slackThreadTs) {
+                    const existingLinkage = getTaskLinkageBySlackThread(slackChannelId, slackThreadTs);
+                    if (existingLinkage) {
+                        linkedTaskId = existingLinkage.taskId;
+                        emitTinyEvent({
+                            type: 'linkage_resolved_slack_thread',
+                            taskId: linkedTaskId,
+                            agentId,
+                            role: 'unknown',
+                            source: 'slack',
+                            metadata: { slackChannelId, slackThreadTs },
+                        });
+                    } else {
+                        const createdTask = createTaskLinkage({
+                            title: message.slice(0, 120),
+                            description: rawMessage,
+                            slackChannelId,
+                            slackThreadTs,
+                            currentOwnerAgentId: agentId,
+                            status: 'in_progress',
+                        });
+                        linkedTaskId = createdTask.id;
+                    }
+                }
+            } catch (error) {
+                log('WARN', `Task linkage update failed for Slack message ${messageId}: ${(error as Error).message}`);
+            }
+        }
+
+        const role = detectWorkflowRole(agentId, agent);
+        if (linkedTaskId) {
+            applyRoleTaskLinkageState(linkedTaskId, agentId, role, log);
+            const linkageContext = buildTaskLinkageContext(linkedTaskId, role, log);
+            if (linkageContext) {
+                message = `${message}\n\n------\n\n${linkageContext}`;
+            }
+            const fetchReviewerContext = overrides.fetchReviewerPrContextFn || buildRoleFetchedPrContext;
+            try {
+                const fetchedReviewerContext = await fetchReviewerContext(linkedTaskId, role, log);
+                if (fetchedReviewerContext) {
+                    message = `${message}\n\n------\n\n${fetchedReviewerContext}`;
+                }
+            } catch (error) {
+                log('WARN', `[ROLE_PR_FETCH] Context fetch failed for task ${linkedTaskId}: ${(error as Error).message}`);
+                warnTinyEvent({
+                    type: role === 'reviewer' ? 'reviewer_pr_fetch_fallback_linkage' : role === 'tester' ? 'tester_pr_fetch_fallback_linkage' : 'role_pr_fetch_fallback_linkage',
+                    taskId: linkedTaskId,
+                    agentId,
+                    role,
+                    source: 'github',
+                    message: (error as Error).message,
+                    metadata: { fallbackUsed: true },
+                });
+            }
+        }
+
         // For internal messages: append pending response indicator so the agent
         // knows other teammates are still processing and won't re-mention them.
         if (isInternal && messageData.conversationId) {
@@ -194,7 +297,8 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
         }
 
         // Run incoming hooks
-        ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
+        const incomingHooksFn = overrides.runIncomingHooksFn || runIncomingHooks;
+        ({ text: message } = await incomingHooksFn(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
         // Invoke agent
         const rootMessageId = (isInternal && messageData.conversationId)
@@ -209,13 +313,106 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
         });
         let response: string;
         let invocationFailed = false;
+        const invokeAgentFn = overrides.invokeAgentFn || invokeAgent;
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            const worker = role === 'coder' ? getCodingWorker() : null;
+            if (worker && linkedTaskId) {
+                emitTinyEvent({
+                    type: 'worker_mode_selected',
+                    taskId: linkedTaskId,
+                    agentId,
+                    role,
+                    metadata: { workerMode: worker.name },
+                });
+                const linkage = getTaskLinkage(linkedTaskId);
+                const md = messageData.sourceMetadata || {};
+                const slackChannelId = typeof md.channelId === 'string' ? md.channelId : undefined;
+                const slackThreadTs = typeof md.threadTs === 'string' ? md.threadTs : undefined;
+                log('INFO', `[CODER_WORKER] Delegating coder task ${linkedTaskId} to worker '${worker.name}'`);
+                const workerResult = await worker.runTask({
+                    taskId: linkedTaskId,
+                    repo: linkage?.repo,
+                    baseBranch: linkage?.baseBranch,
+                    workingBranch: linkage?.workingBranch,
+                    linearIssueIdentifier: linkage?.linearIssueIdentifier,
+                    prompt: message,
+                    slackChannelId,
+                    slackThreadTs,
+                });
+
+                if (workerResult.branch && linkage?.repo && linkage?.baseBranch) {
+                    attachGitBranch(linkedTaskId, {
+                        gitProvider: linkage.gitProvider || 'github',
+                        repo: linkage.repo,
+                        baseBranch: linkage.baseBranch,
+                        workingBranch: workerResult.branch,
+                    });
+                    emitTinyEvent({
+                        type: 'worker_branch_attached',
+                        taskId: linkedTaskId,
+                        agentId,
+                        role,
+                        metadata: {
+                            workerMode: worker.name,
+                            repo: linkage.repo,
+                            baseBranch: linkage.baseBranch,
+                            workingBranch: workerResult.branch,
+                        },
+                    });
+                }
+
+                if (
+                    typeof workerResult.pullRequestNumber === 'number'
+                    && workerResult.pullRequestUrl
+                ) {
+                    attachPullRequest(linkedTaskId, {
+                        pullRequestNumber: workerResult.pullRequestNumber,
+                        pullRequestUrl: workerResult.pullRequestUrl,
+                    });
+                    emitTinyEvent({
+                        type: 'worker_pull_request_attached',
+                        taskId: linkedTaskId,
+                        agentId,
+                        role,
+                        metadata: {
+                            workerMode: worker.name,
+                            pullRequestNumber: workerResult.pullRequestNumber,
+                            pullRequestUrl: workerResult.pullRequestUrl,
+                        },
+                    });
+                }
+
+                response = workerResult.summary;
+                log('INFO', `[CODER_WORKER] Delegation complete for task ${linkedTaskId}`);
+            } else {
+                response = await invokeAgentFn(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            }
         } catch (error) {
             invocationFailed = true;
             const providerLabel = agent.provider || 'unknown-provider';
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
+            if (role === 'coder' && linkedTaskId) {
+                errorTinyEvent({
+                    type: 'worker_failed',
+                    taskId: linkedTaskId,
+                    agentId,
+                    role,
+                    message: (error as Error).message,
+                    metadata: { provider: providerLabel },
+                });
+            }
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
+        }
+
+        if (linkedTaskId && response) {
+            response = await applyTaskLinkageCommands(
+                linkedTaskId,
+                role,
+                agentId,
+                response,
+                log,
+                overrides.taskLinkageExecutionDeps,
+            );
         }
 
         emitEvent('chain_step_done', {
@@ -248,7 +445,8 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
             }
 
             // Run outgoing hooks
-            const { text: hookedResponse, metadata } = await runOutgoingHooks(finalResponse, { channel, sender, messageId, originalMessage: rawMessage });
+            const outgoingHooksFn = overrides.runOutgoingHooksFn || runOutgoingHooks;
+            const { text: hookedResponse, metadata } = await outgoingHooksFn(finalResponse, { channel, sender, messageId, originalMessage: rawMessage });
 
             // Handle long responses — send as file attachment
             const { message: responseMessage, files: allFiles } = handleLongResponse(hookedResponse, outboundFiles);
@@ -265,6 +463,7 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
                 metadata: {
                     ...metadata,
                     agentId,
+                    ...(linkedTaskId ? { taskId: linkedTaskId } : {}),
                 },
             });
 
@@ -311,6 +510,7 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
                     sequence: devPipelineSequence,
                     currentIndex: startIndex,
                 } : undefined,
+                taskId: linkedTaskId,
             };
             conversations.set(convId, conv);
             log('INFO', `Conversation started: ${convId} (team: ${teamContext.team.name})`);
@@ -419,6 +619,14 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
     }
 }
 
+export async function processMessageForTest(
+    dbMsg: DbMessage,
+    additionalMsgs: DbMessage[] = [],
+    overrides: ProcessMessageOverrides = {},
+): Promise<void> {
+    await processMessage(dbMsg, additionalMsgs, overrides);
+}
+
 // Per-agent processing chains - ensures messages to same agent are sequential
 const agentProcessingChains = new Map<string, Promise<void>>();
 
@@ -486,68 +694,74 @@ function logAgentConfig(): void {
 
 // ─── Start ──────────────────────────────────────────────────────────────────
 
-// Initialize SQLite queue
-initQueueDb();
+export function startQueueProcessor(): void {
+    // Initialize SQLite queue
+    initQueueDb();
 
-// Recover stale messages from previous crash
-const recovered = recoverStaleMessages();
-if (recovered > 0) {
-    log('INFO', `Recovered ${recovered} stale message(s) from previous session`);
+    // Recover stale messages from previous crash
+    const recovered = recoverStaleMessages();
+    if (recovered > 0) {
+        log('INFO', `Recovered ${recovered} stale message(s) from previous session`);
+    }
+
+    // Start the API server (passes conversations for queue status reporting)
+    const apiServer = startApiServer(conversations);
+
+    // Load plugins (async IIFE to avoid top-level await)
+    (async () => {
+        await loadPlugins();
+    })();
+
+    log('INFO', 'Queue processor started (SQLite-backed)');
+    logAgentConfig();
+    emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
+
+    // Event-driven: all messages come through the API server (same process)
+    queueEvents.on('message:enqueued', () => processQueue());
+
+    // Periodic maintenance
+    setInterval(() => {
+        const count = recoverStaleMessages();
+        if (count > 0) log('INFO', `Recovered ${count} stale message(s)`);
+    }, 5 * 60 * 1000); // every 5 min
+
+    setInterval(() => {
+        // Clean up old conversations (TTL: 30 min)
+        const cutoff = Date.now() - 30 * 60 * 1000;
+        for (const [id, conv] of conversations.entries()) {
+            if (conv.startTime < cutoff) {
+                log('WARN', `Conversation ${id} timed out after 30 min — cleaning up`);
+                conversations.delete(id);
+            }
+        }
+    }, 30 * 60 * 1000); // every 30 min
+
+    setInterval(() => {
+        const pruned = pruneAckedResponses();
+        if (pruned > 0) log('INFO', `Pruned ${pruned} acked response(s)`);
+    }, 60 * 60 * 1000); // every 1 hr
+
+    setInterval(() => {
+        const pruned = pruneCompletedMessages();
+        if (pruned > 0) log('INFO', `Pruned ${pruned} completed message(s)`);
+    }, 60 * 60 * 1000); // every 1 hr
+
+    // Graceful shutdown
+    process.on('SIGINT', () => {
+        log('INFO', 'Shutting down queue processor...');
+        closeQueueDb();
+        apiServer.close();
+        process.exit(0);
+    });
+
+    process.on('SIGTERM', () => {
+        log('INFO', 'Shutting down queue processor...');
+        closeQueueDb();
+        apiServer.close();
+        process.exit(0);
+    });
 }
 
-// Start the API server (passes conversations for queue status reporting)
-const apiServer = startApiServer(conversations);
-
-// Load plugins (async IIFE to avoid top-level await)
-(async () => {
-    await loadPlugins();
-})();
-
-log('INFO', 'Queue processor started (SQLite-backed)');
-logAgentConfig();
-emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
-
-// Event-driven: all messages come through the API server (same process)
-queueEvents.on('message:enqueued', () => processQueue());
-
-// Periodic maintenance
-setInterval(() => {
-    const count = recoverStaleMessages();
-    if (count > 0) log('INFO', `Recovered ${count} stale message(s)`);
-}, 5 * 60 * 1000); // every 5 min
-
-setInterval(() => {
-    // Clean up old conversations (TTL: 30 min)
-    const cutoff = Date.now() - 30 * 60 * 1000;
-    for (const [id, conv] of conversations.entries()) {
-        if (conv.startTime < cutoff) {
-            log('WARN', `Conversation ${id} timed out after 30 min — cleaning up`);
-            conversations.delete(id);
-        }
-    }
-}, 30 * 60 * 1000); // every 30 min
-
-setInterval(() => {
-    const pruned = pruneAckedResponses();
-    if (pruned > 0) log('INFO', `Pruned ${pruned} acked response(s)`);
-}, 60 * 60 * 1000); // every 1 hr
-
-setInterval(() => {
-    const pruned = pruneCompletedMessages();
-    if (pruned > 0) log('INFO', `Pruned ${pruned} completed message(s)`);
-}, 60 * 60 * 1000); // every 1 hr
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-    log('INFO', 'Shutting down queue processor...');
-    closeQueueDb();
-    apiServer.close();
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    log('INFO', 'Shutting down queue processor...');
-    closeQueueDb();
-    apiServer.close();
-    process.exit(0);
-});
+if (require.main === module) {
+    startQueueProcessor();
+}
