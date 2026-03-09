@@ -97,6 +97,8 @@ app.put('/api/agents/:id', async (c) => {
             name: body.name!,
             provider: body.provider!,
             model: body.model!,
+            ...(body.role ? { role: body.role } : {}),
+            ...(body.providerOptions ? { providerOptions: body.providerOptions } : {}),
             working_directory: workingDir,
             ...(body.system_prompt ? { system_prompt: body.system_prompt } : {}),
             ...(body.prompt_file ? { prompt_file: body.prompt_file } : {}),

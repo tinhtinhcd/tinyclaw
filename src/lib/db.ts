@@ -23,6 +23,8 @@ export interface DbMessage {
     files: string | null;         // JSON array
     conversation_id: string | null;
     from_agent: string | null;
+    source: string | null;
+    source_metadata: string | null; // JSON object
     status: 'pending' | 'processing' | 'completed' | 'dead';
     retry_count: number;
     last_error: string | null;
@@ -57,6 +59,8 @@ export interface EnqueueMessageData {
     files?: string[];
     conversationId?: string;
     fromAgent?: string;
+    source?: string;
+    sourceMetadata?: Record<string, unknown>;
 }
 
 export interface EnqueueResponseData {
@@ -101,6 +105,8 @@ export function initQueueDb(): void {
             files TEXT,
             conversation_id TEXT,
             from_agent TEXT,
+            source TEXT,
+            source_metadata TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             retry_count INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
@@ -150,6 +156,15 @@ export function initQueueDb(): void {
     if (!cols.some(c => c.name === 'metadata')) {
         db.exec('ALTER TABLE responses ADD COLUMN metadata TEXT');
     }
+
+    // Migrate: add source columns to messages if missing
+    const msgCols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
+    if (!msgCols.some(c => c.name === 'source')) {
+        db.exec('ALTER TABLE messages ADD COLUMN source TEXT');
+    }
+    if (!msgCols.some(c => c.name === 'source_metadata')) {
+        db.exec('ALTER TABLE messages ADD COLUMN source_metadata TEXT');
+    }
 }
 
 function getDb(): Database.Database {
@@ -163,8 +178,8 @@ export function enqueueMessage(data: EnqueueMessageData): number {
     const d = getDb();
     const now = Date.now();
     const result = d.prepare(`
-        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, source, source_metadata, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     `).run(
         data.messageId,
         data.channel,
@@ -175,6 +190,8 @@ export function enqueueMessage(data: EnqueueMessageData): number {
         data.files ? JSON.stringify(data.files) : null,
         data.conversationId ?? null,
         data.fromAgent ?? null,
+        data.source ?? null,
+        data.sourceMetadata ? JSON.stringify(data.sourceMetadata) : null,
         now,
         now,
     );

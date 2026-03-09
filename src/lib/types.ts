@@ -8,11 +8,25 @@ export interface CustomProvider {
 
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic', 'openai', 'opencode', or 'custom:<provider_id>'
-    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
+    role?: string;
+    provider?: string;       // e.g. 'anthropic', 'openai', 'opencode', 'openrouter', or 'custom:<provider_id>'
+    model?: string;          // provider-specific model id
+    providerOptions?: Record<string, unknown>;
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
+}
+
+export interface RuntimeAgentConfig {
+    provider: string;
+    model: string;
+    providerOptions?: Record<string, unknown>;
+}
+
+export interface AgentRoleDefault {
+    provider?: string;
+    model?: string;
+    providerOptions?: Record<string, unknown>;
 }
 
 export interface TeamConfig {
@@ -56,6 +70,31 @@ export interface Settings {
         discord?: { bot_token?: string };
         telegram?: { bot_token?: string };
         whatsapp?: {};
+        slack?: {
+            // Legacy single-bot fields (still supported)
+            bot_token?: string;
+            app_token?: string;
+            signing_secret?: string;
+            bot_token_env?: string;
+            app_token_env?: string;
+            signing_secret_env?: string;
+            // New multi-bot config
+            bots?: Record<string, {
+                bot_token?: string;
+                app_token?: string;
+                signing_secret?: string;
+                bot_token_env?: string;
+                app_token_env?: string;
+                signing_secret_env?: string;
+            }>;
+            role_bot_map?: Record<string, string>;
+            default_bot_id?: string;
+            // Legacy outbound role token mapping (kept for backward compatibility)
+            role_identities?: Record<string, {
+                bot_token?: string;
+                bot_token_env?: string;
+            }>;
+        };
     };
     models?: {
         provider?: string; // 'anthropic', 'openai', or 'opencode'
@@ -71,6 +110,13 @@ export interface Settings {
             model?: string;
         };
     };
+    defaults?: {
+        provider?: string;
+        models?: Record<string, string>;
+        providerOptions?: Record<string, Record<string, unknown>>;
+    };
+    roleDefaults?: Record<string, AgentRoleDefault>;
+    agentDefaults?: AgentRoleDefault;
     agents?: Record<string, AgentConfig>;
     custom_providers?: Record<string, CustomProvider>;
     teams?: Record<string, TeamConfig>;
@@ -83,6 +129,8 @@ export interface MessageData {
     channel: string;
     sender: string;
     senderId?: string;
+    source?: string;
+    sourceMetadata?: Record<string, unknown>;
     message: string;
     timestamp: number;
     messageId: string;

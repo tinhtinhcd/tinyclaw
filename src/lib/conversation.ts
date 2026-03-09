@@ -208,6 +208,7 @@ export function completeConversation(conv: Conversation): void {
 
     // Handle long responses — send as file attachment
     const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
+    const finalAgentId = conv.responses.length > 0 ? conv.responses[conv.responses.length - 1]!.agentId : undefined;
 
     // Write to outgoing queue
     enqueueResponse({
@@ -216,7 +217,9 @@ export function completeConversation(conv: Conversation): void {
         message: responseMessage,
         originalMessage: conv.originalMessage,
         messageId: conv.messageId,
+        agent: finalAgentId,
         files: allFiles.length > 0 ? allFiles : undefined,
+        metadata: finalAgentId ? { agentId: finalAgentId, teamId: conv.teamContext.teamId } : { teamId: conv.teamContext.teamId },
     });
 
     log('INFO', `✓ Response ready [${conv.channel}] ${conv.sender} (${finalResponse.length} chars)`);

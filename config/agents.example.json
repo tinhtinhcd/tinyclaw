@@ -1,0 +1,44 @@
+{
+  "agents": {
+    "pm": {
+      "name": "PM",
+      "role": "pm",
+      "provider": "openrouter",
+      "model": "openai/gpt-4.1-mini",
+      "providerOptions": {
+        "temperature": 0.2
+      },
+      "working_directory": "pm"
+    },
+    "coder": {
+      "name": "Coder",
+      "role": "coder",
+      "provider": "openrouter",
+      "model": "anthropic/claude-3.7-sonnet",
+      "providerOptions": {
+        "temperature": 0.1
+      },
+      "working_directory": "coder"
+    },
+    "reviewer": {
+      "name": "Reviewer",
+      "role": "reviewer",
+      "provider": "openrouter",
+      "model": "openai/gpt-4.1-mini",
+      "providerOptions": {
+        "temperature": 0.1
+      },
+      "working_directory": "reviewer"
+    },
+    "tester": {
+      "name": "Tester",
+      "role": "tester",
+      "provider": "openrouter",
+      "model": "openai/gpt-4.1-mini",
+      "providerOptions": {
+        "temperature": 0.1
+      },
+      "working_directory": "tester"
+    }
+  }
+}

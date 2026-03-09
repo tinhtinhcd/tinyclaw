@@ -7,9 +7,10 @@ const app = new Hono();
 // POST /api/message
 app.post('/api/message', async (c) => {
     const body = await c.req.json();
-    const { message, agent, sender, senderId, channel, files, messageId: clientMessageId } = body as {
+    const { message, agent, sender, senderId, channel, files, messageId: clientMessageId, source, sourceMetadata } = body as {
         message?: string; agent?: string; sender?: string; senderId?: string;
         channel?: string; files?: string[]; messageId?: string;
+        source?: string; sourceMetadata?: Record<string, unknown>;
     };
 
     if (!message || typeof message !== 'string') {
@@ -31,6 +32,8 @@ app.post('/api/message', async (c) => {
         messageId,
         agent: agent || undefined,
         files: files && files.length > 0 ? files : undefined,
+        source: source || undefined,
+        sourceMetadata,
     });
 
     log('INFO', `[API] Message enqueued: ${message.substring(0, 60)}...`);

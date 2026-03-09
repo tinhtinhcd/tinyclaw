@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 /**
  * Queue Processor - Handles messages from all channels (WhatsApp, Telegram, etc.)
  *
@@ -85,6 +86,8 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
             channel,
             sender,
             senderId: dbMsg.sender_id ?? undefined,
+            source: dbMsg.source ?? undefined,
+            sourceMetadata: dbMsg.source_metadata ? JSON.parse(dbMsg.source_metadata) : undefined,
             message: rawMessage,
             timestamp: dbMsg.created_at,
             messageId,
@@ -194,18 +197,35 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
         ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
         // Invoke agent
-        emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
+        const rootMessageId = (isInternal && messageData.conversationId)
+            ? (conversations.get(messageData.conversationId)?.messageId || messageId)
+            : messageId;
+        emitEvent('chain_step_start', {
+            agentId,
+            agentName: agent.name,
+            fromAgent: messageData.fromAgent || null,
+            messageId: rootMessageId,
+            channel,
+        });
         let response: string;
+        let invocationFailed = false;
         try {
             response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
         } catch (error) {
-            const provider = agent.provider || 'anthropic';
-            const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
+            invocationFailed = true;
+            const providerLabel = agent.provider || 'unknown-provider';
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
         }
 
-        emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
+        emitEvent('chain_step_done', {
+            agentId,
+            agentName: agent.name,
+            responseLength: response.length,
+            responseText: response,
+            messageId: rootMessageId,
+            channel,
+        });
 
         // Extract and post [#team_id: message] chat room broadcasts
         const chatRoomMsgs = extractChatRoomMessages(response, agentId, teams);
@@ -242,7 +262,10 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
                 messageId,
                 agent: agentId,
                 files: allFiles.length > 0 ? allFiles : undefined,
-                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+                metadata: {
+                    ...metadata,
+                    agentId,
+                },
             });
 
             log('INFO', `✓ Response ready [${channel}] ${sender} via agent:${agentId} (${finalResponse.length} chars)`);
@@ -302,6 +325,9 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
 
         const workflowState = conv.workflowState;
         if (workflowState?.type === 'dev_pipeline') {
+            if (invocationFailed) {
+                log('WARN', `Dev pipeline halted for conversation ${conv.id}: @${agentId} failed, skipping next stage handoff`);
+            }
             const maybeMentions = extractTeammateMentions(
                 response, agentId, conv.teamContext.teamId, teams, agents
             );
@@ -311,7 +337,7 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
 
             const currentStage = workflowState.currentIndex;
             const lastStage = workflowState.sequence.length - 1;
-            if (currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
+            if (!invocationFailed && currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
                 const nextStage = currentStage + 1;
                 const nextAgentId = workflowState.sequence[nextStage];
                 workflowState.currentIndex = nextStage;

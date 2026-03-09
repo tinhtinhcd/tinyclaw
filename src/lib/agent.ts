@@ -105,7 +105,7 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
             if (tid === agentId) continue;
             const agent = agents[tid];
             if (agent && !teammates.some(t => t.id === tid)) {
-                teammates.push({ id: tid, name: agent.name, model: agent.model });
+                teammates.push({ id: tid, name: agent.name, model: agent.model || 'auto' });
             }
         }
     }
@@ -113,7 +113,7 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
     let block = '';
     const self = agents[agentId];
     if (self) {
-        block += `\n### You\n\n- \`@${agentId}\` — **${self.name}** (${self.model})\n`;
+        block += `\n### You\n\n- \`@${agentId}\` — **${self.name}** (${self.model || 'auto'})\n`;
     }
     if (teammates.length > 0) {
         block += '\n### Your Teammates\n\n';

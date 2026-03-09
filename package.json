@@ -9,11 +9,14 @@
     "whatsapp": "node dist/channels/whatsapp-client.js",
     "discord": "node dist/channels/discord-client.js",
     "telegram": "node dist/channels/telegram-client.js",
+    "slack": "node dist/integrations/slack/slack-client.js",
     "queue": "node dist/queue-processor.js",
     "visualize": "node dist/visualizer/team-visualizer.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.14.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
     "better-sqlite3": "^12.6.2",
