@@ -24,6 +24,7 @@ app.put('/api/teams/:id', async (c) => {
             name: body.name!,
             agents: body.agents!,
             leader_agent: body.leader_agent!,
+            workflow: body.workflow,
         };
     });
     log('INFO', `[API] Team '${teamId}' saved`);

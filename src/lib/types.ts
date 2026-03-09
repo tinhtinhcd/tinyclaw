@@ -19,6 +19,13 @@ export interface TeamConfig {
     name: string;
     agents: string[];
     leader_agent: string;
+    workflow?: {
+        type: 'dev_pipeline';
+        pm: string;
+        coder: string;
+        reviewer: string;
+        tester: string;
+    };
 }
 
 export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
@@ -103,6 +110,12 @@ export interface Conversation {
     outgoingMentions: Map<string, number>;
     // Track agents that have been enqueued but haven't finished responding
     pendingAgents: Set<string>;
+    // Optional strict workflow state (e.g. PM -> Coder -> Reviewer -> Tester)
+    workflowState?: {
+        type: 'dev_pipeline';
+        sequence: string[];
+        currentIndex: number;
+    };
 }
 
 export interface ResponseData {

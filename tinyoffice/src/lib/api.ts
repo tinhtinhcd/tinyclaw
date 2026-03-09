@@ -27,6 +27,13 @@ export interface TeamConfig {
   name: string;
   agents: string[];
   leader_agent: string;
+  workflow?: {
+    type: "dev_pipeline";
+    pm: string;
+    coder: string;
+    reviewer: string;
+    tester: string;
+  };
 }
 
 export interface Settings {

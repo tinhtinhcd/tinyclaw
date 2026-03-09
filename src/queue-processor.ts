@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { MessageData, Conversation, TeamConfig } from './lib/types';
+import { MessageData, Conversation, TeamConfig, AgentConfig } from './lib/types';
 import {
     LOG_FILE, CHATS_DIR, FILES_DIR,
     getSettings, getAgents, getTeams
@@ -44,6 +44,31 @@ import {
         fs.mkdirSync(dir, { recursive: true });
     }
 });
+
+function getDevPipelineSequence(team: TeamConfig, agents: Record<string, AgentConfig>): string[] | null {
+    const wf = team.workflow;
+    if (!wf || wf.type !== 'dev_pipeline') return null;
+
+    const sequence = [wf.pm, wf.coder, wf.reviewer, wf.tester].map(id => id.toLowerCase());
+    const unique = new Set(sequence);
+    if (unique.size !== sequence.length) {
+        log('WARN', `Team ${team.name} has duplicate workflow agents; disabling dev_pipeline for this conversation`);
+        return null;
+    }
+
+    for (const stageAgent of sequence) {
+        if (!team.agents.includes(stageAgent)) {
+            log('WARN', `Team ${team.name} workflow agent '${stageAgent}' is not in team.agents; disabling dev_pipeline for this conversation`);
+            return null;
+        }
+        if (!agents[stageAgent]) {
+            log('WARN', `Team ${team.name} workflow agent '${stageAgent}' not found in agent config; disabling dev_pipeline for this conversation`);
+            return null;
+        }
+    }
+
+    return sequence;
+}
 
 // Process one or more batched messages for an agent
 async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []): Promise<void> {
@@ -236,6 +261,13 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
         } else {
             // New conversation
             const convId = `${messageId}_${Date.now()}`;
+            const candidateSequence = getDevPipelineSequence(teamContext.team, agents);
+            const sequenceStartIndex = candidateSequence ? candidateSequence.indexOf(agentId) : -1;
+            if (candidateSequence && sequenceStartIndex < 0) {
+                log('WARN', `Team ${teamContext.team.name} has dev_pipeline configured but initial agent '${agentId}' is not in workflow stages; using mention-based flow`);
+            }
+            const devPipelineSequence = sequenceStartIndex >= 0 ? candidateSequence : null;
+            const startIndex = sequenceStartIndex >= 0 ? sequenceStartIndex : 0;
             conv = {
                 id: convId,
                 channel,
@@ -251,6 +283,11 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
                 startTime: Date.now(),
                 outgoingMentions: new Map(),
                 pendingAgents: new Set([agentId]),
+                workflowState: devPipelineSequence ? {
+                    type: 'dev_pipeline',
+                    sequence: devPipelineSequence,
+                    currentIndex: startIndex,
+                } : undefined,
             };
             conversations.set(convId, conv);
             log('INFO', `Conversation started: ${convId} (team: ${teamContext.team.name})`);
@@ -263,30 +300,74 @@ async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []
         conv.pendingAgents.delete(agentId);
         collectFiles(response, conv.files);
 
-        // Check for teammate mentions
-        const teammateMentions = extractTeammateMentions(
-            response, agentId, conv.teamContext.teamId, teams, agents
-        );
+        const workflowState = conv.workflowState;
+        if (workflowState?.type === 'dev_pipeline') {
+            const maybeMentions = extractTeammateMentions(
+                response, agentId, conv.teamContext.teamId, teams, agents
+            );
+            if (maybeMentions.length > 0) {
+                log('INFO', `Conversation ${conv.id} is in dev_pipeline mode; ignoring ${maybeMentions.length} explicit teammate mention(s)`);
+            }
 
-        if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
-            // Enqueue internal messages for each mention
-            incrementPending(conv, teammateMentions.length);
-            conv.outgoingMentions.set(agentId, teammateMentions.length);
-            for (const mention of teammateMentions) {
-                conv.pendingAgents.add(mention.teammateId);
-                log('INFO', `@${agentId} → @${mention.teammateId}`);
-                emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+            const currentStage = workflowState.currentIndex;
+            const lastStage = workflowState.sequence.length - 1;
+            if (currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
+                const nextStage = currentStage + 1;
+                const nextAgentId = workflowState.sequence[nextStage];
+                workflowState.currentIndex = nextStage;
 
-                const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
-                enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+                incrementPending(conv, 1);
+                conv.outgoingMentions.set(agentId, 1);
+                conv.pendingAgents.add(nextAgentId);
+
+                log('INFO', `Dev pipeline handoff @${agentId} → @${nextAgentId}`);
+                emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: nextAgentId });
+
+                const internalMsg = [
+                    `[Workflow handoff: dev_pipeline ${nextStage + 1}/${workflowState.sequence.length}]`,
+                    '',
+                    `Original user request:`,
+                    conv.originalMessage,
+                    '',
+                    `Previous output from @${agentId}:`,
+                    response.trim(),
+                ].join('\n');
+
+                enqueueInternalMessage(conv.id, agentId, nextAgentId, internalMsg, {
                     channel: messageData.channel,
                     sender: messageData.sender,
                     senderId: messageData.senderId,
                     messageId: messageData.messageId,
                 });
+            } else if (currentStage < lastStage) {
+                log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — stopping dev_pipeline handoff`);
             }
-        } else if (teammateMentions.length > 0) {
-            log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
+        } else {
+            // Check for teammate mentions
+            const teammateMentions = extractTeammateMentions(
+                response, agentId, conv.teamContext.teamId, teams, agents
+            );
+
+            if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
+                // Enqueue internal messages for each mention
+                incrementPending(conv, teammateMentions.length);
+                conv.outgoingMentions.set(agentId, teammateMentions.length);
+                for (const mention of teammateMentions) {
+                    conv.pendingAgents.add(mention.teammateId);
+                    log('INFO', `@${agentId} → @${mention.teammateId}`);
+                    emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+
+                    const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
+                    enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+                        channel: messageData.channel,
+                        sender: messageData.sender,
+                        senderId: messageData.senderId,
+                        messageId: messageData.messageId,
+                    });
+                }
+            } else if (teammateMentions.length > 0) {
+                log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
+            }
         }
 
         // This branch is done - use atomic decrement with locking
