@@ -9,6 +9,7 @@ export interface CustomProvider {
 export interface AgentConfig {
     name: string;
     role?: string;
+    workflowRole?: string;   // optional explicit runtime-mapped workflow role
     provider?: string;       // e.g. 'anthropic', 'openai', 'opencode', 'openrouter', or 'custom:<provider_id>'
     model?: string;          // provider-specific model id
     providerOptions?: Record<string, unknown>;

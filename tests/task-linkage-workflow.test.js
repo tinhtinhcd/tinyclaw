@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { evaluateTaskLinkageCommand } = require('../dist/lib/task-linkage-workflow.js');
+const { evaluateTaskLinkageCommand, detectWorkflowRole } = require('../dist/lib/task-linkage-workflow.js');
+const { onEvent } = require('../dist/lib/logging.js');
 
 function baseLinkage() {
     return {
@@ -9,6 +10,11 @@ function baseLinkage() {
         status: 'in_progress',
     };
 }
+
+const emittedEvents = [];
+onEvent((type, data) => {
+    emittedEvents.push({ type, data });
+});
 
 test('PM role permissions', async (t) => {
     await t.test('accepts create_linear_issue', () => {
@@ -226,4 +232,48 @@ test('State guards and overwrite behavior', async (t) => {
         }, linkage);
         assert.equal(decision.accepted, true);
     });
+});
+
+test('Role detection prefers explicit role over heuristics', () => {
+    emittedEvents.length = 0;
+    const role = detectWorkflowRole('coder-bot', {
+        name: 'Agent',
+        role: 'reviewer',
+        working_directory: '.',
+    });
+    assert.equal(role, 'reviewer');
+    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
+});
+
+test('Role detection heuristic fallback still works for legacy IDs', () => {
+    emittedEvents.length = 0;
+    const role = detectWorkflowRole('qa_legacy_bot', {
+        name: 'Agent',
+        working_directory: '.',
+    });
+    assert.equal(role, 'tester');
+    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), true);
+});
+
+test('Role detection does not misclassify invalid explicit role', () => {
+    emittedEvents.length = 0;
+    const role = detectWorkflowRole('dev-agent', {
+        name: 'Agent',
+        role: 'team_lead',
+        working_directory: '.',
+    });
+    assert.equal(role, 'unknown');
+    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_invalid_explicit'), true);
+    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
+});
+
+test('Role detection uses mapped workflow role before heuristics', () => {
+    emittedEvents.length = 0;
+    const role = detectWorkflowRole('dev-agent', {
+        name: 'Agent',
+        workflowRole: 'pm',
+        working_directory: '.',
+    });
+    assert.equal(role, 'pm');
+    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
 });

@@ -117,14 +117,70 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     ];
 }
 
-export function detectWorkflowRole(agentId: string, agent: AgentConfig): WorkflowRole {
-    const role = (agent.role || '').toLowerCase();
+function normalizeWorkflowRole(value?: string): WorkflowRole | null {
+    if (!value) return null;
+    const role = value.trim().toLowerCase();
     if (role === 'pm' || role === 'coder' || role === 'reviewer' || role === 'tester') return role;
+    return null;
+}
+
+export function detectWorkflowRole(agentId: string, agent: AgentConfig): WorkflowRole {
+    const explicitRole = normalizeWorkflowRole(agent.role);
+    if (explicitRole) return explicitRole;
+    if (typeof agent.role === 'string' && agent.role.trim().length > 0) {
+        warnTinyEvent({
+            type: 'workflow_role_invalid_explicit',
+            agentId,
+            role: 'unknown',
+            message: `Invalid explicit role '${agent.role}'`,
+            metadata: { configuredRole: agent.role },
+        });
+        return 'unknown';
+    }
+    const mappedRole = normalizeWorkflowRole(agent.workflowRole);
+    if (mappedRole) return mappedRole;
+
     const id = agentId.toLowerCase();
-    if (id.includes('pm')) return 'pm';
-    if (id.includes('coder') || id.includes('dev')) return 'coder';
-    if (id.includes('review')) return 'reviewer';
-    if (id.includes('test') || id.includes('qa')) return 'tester';
+    if (id.includes('pm')) {
+        warnTinyEvent({
+            type: 'workflow_role_heuristic_fallback',
+            agentId,
+            role: 'pm',
+            message: 'Role inferred by agentId heuristic',
+            metadata: { inferredFrom: 'agentId:pm' },
+        });
+        return 'pm';
+    }
+    if (id.includes('coder') || id.includes('dev')) {
+        warnTinyEvent({
+            type: 'workflow_role_heuristic_fallback',
+            agentId,
+            role: 'coder',
+            message: 'Role inferred by agentId heuristic',
+            metadata: { inferredFrom: 'agentId:coder|dev' },
+        });
+        return 'coder';
+    }
+    if (id.includes('review')) {
+        warnTinyEvent({
+            type: 'workflow_role_heuristic_fallback',
+            agentId,
+            role: 'reviewer',
+            message: 'Role inferred by agentId heuristic',
+            metadata: { inferredFrom: 'agentId:review' },
+        });
+        return 'reviewer';
+    }
+    if (id.includes('test') || id.includes('qa')) {
+        warnTinyEvent({
+            type: 'workflow_role_heuristic_fallback',
+            agentId,
+            role: 'tester',
+            message: 'Role inferred by agentId heuristic',
+            metadata: { inferredFrom: 'agentId:test|qa' },
+        });
+        return 'tester';
+    }
     return 'unknown';
 }
 

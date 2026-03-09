@@ -80,12 +80,17 @@ initQueueDb();
 
 test('PM runtime flow: linkage context injected, create_linear_issue applied, response cleaned, metadata correct', async () => {
     let capturedPrompt = '';
+    let incomingHookSeen = '';
     const invokeAgentFn = async (_agent, _agentId, prompt) => {
         capturedPrompt = prompt;
         return [
             'PM analysis completed.',
             '[task_linkage action="create_linear_issue" title="Fix parser bug" description="Handle malformed payload from Slack." teamId="team-1"]',
         ].join('\n');
+    };
+    const incomingHook = async (text) => {
+        incomingHookSeen = text;
+        return { text };
     };
 
     const deps = {
@@ -105,11 +110,15 @@ test('PM runtime flow: linkage context injected, create_linear_issue applied, re
     const dbMsg = buildSlackDbMessage(1, 'msg_pm_1', 'pm', 'Start PM planning');
     await processMessageForTest(dbMsg, [], {
         invokeAgentFn,
-        runIncomingHooksFn: passthroughIncoming,
+        runIncomingHooksFn: incomingHook,
         runOutgoingHooksFn: passthroughOutgoing,
         taskLinkageExecutionDeps: deps,
     });
 
+    assert.ok(!incomingHookSeen.includes('[TASK_LINKAGE_CONTEXT]'));
+    assert.ok(!incomingHookSeen.includes('[REVIEWER_FETCHED_PR_CONTEXT]'));
+    assert.ok(!incomingHookSeen.includes('[TESTER_FETCHED_PR_CONTEXT]'));
+    assert.ok(!incomingHookSeen.includes('[TESTER_SYNTHESIZED_FOCUS]'));
     assert.ok(capturedPrompt.includes('[TASK_LINKAGE_CONTEXT]'));
     assert.ok(capturedPrompt.includes('PM guidance:'));
 

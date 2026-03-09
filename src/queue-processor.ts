@@ -89,6 +89,17 @@ function getDevPipelineSequence(team: TeamConfig, agents: Record<string, AgentCo
     return sequence;
 }
 
+function deriveMappedWorkflowRole(agentId: string, teamContext: { teamId: string; team: TeamConfig } | null): WorkflowRole | null {
+    const wf = teamContext?.team.workflow;
+    if (!wf || wf.type !== 'dev_pipeline') return null;
+    const id = agentId.toLowerCase();
+    if (wf.pm.toLowerCase() === id) return 'pm';
+    if (wf.coder.toLowerCase() === id) return 'coder';
+    if (wf.reviewer.toLowerCase() === id) return 'reviewer';
+    if (wf.tester.toLowerCase() === id) return 'tester';
+    return null;
+}
+
 // Process one or more batched messages for an agent
 interface ProcessMessageOverrides {
     invokeAgentFn?: typeof invokeAgent;
@@ -248,7 +259,20 @@ async function processMessage(
             }
         }
 
-        const role = detectWorkflowRole(agentId, agent);
+        // Prepend additional batched messages (chat room messages, etc.)
+        if (additionalMsgs.length > 0) {
+            const batchedTexts = additionalMsgs.map(m => m.message);
+            message = `${batchedTexts.join('\n\n------\n\n')}\n\n------\n\n${message}`;
+            log('INFO', `Batched ${additionalMsgs.length} additional message(s) for agent ${agentId}`);
+        }
+
+        // Run incoming hooks on raw/batched message before internal context injection.
+        const incomingHooksFn = overrides.runIncomingHooksFn || runIncomingHooks;
+        ({ text: message } = await incomingHooksFn(message, { channel, sender, messageId, originalMessage: rawMessage }));
+
+        const mappedRole = deriveMappedWorkflowRole(agentId, teamContext) || undefined;
+        const roleAwareAgent = mappedRole ? { ...agent, workflowRole: mappedRole } : agent;
+        const role = detectWorkflowRole(agentId, roleAwareAgent);
         if (linkedTaskId) {
             applyRoleTaskLinkageState(linkedTaskId, agentId, role, log);
             const linkageContext = buildTaskLinkageContext(linkedTaskId, role, log);
@@ -280,7 +304,6 @@ async function processMessage(
         if (isInternal && messageData.conversationId) {
             const conv = conversations.get(messageData.conversationId);
             if (conv) {
-                // Count agents that have been enqueued but haven't responded yet, excluding this agent
                 const respondedAgents = new Set(conv.responses.map(r => r.agentId));
                 const othersPending = [...conv.pendingAgents].filter(a => a !== agentId && !respondedAgents.has(a)).length;
                 if (othersPending > 0) {
@@ -288,17 +311,6 @@ async function processMessage(
                 }
             }
         }
-
-        // Prepend additional batched messages (chat room messages, etc.)
-        if (additionalMsgs.length > 0) {
-            const batchedTexts = additionalMsgs.map(m => m.message);
-            message = `${batchedTexts.join('\n\n------\n\n')}\n\n------\n\n${message}`;
-            log('INFO', `Batched ${additionalMsgs.length} additional message(s) for agent ${agentId}`);
-        }
-
-        // Run incoming hooks
-        const incomingHooksFn = overrides.runIncomingHooksFn || runIncomingHooks;
-        ({ text: message } = await incomingHooksFn(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
         // Invoke agent
         const rootMessageId = (isInternal && messageData.conversationId)

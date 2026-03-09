@@ -44,6 +44,10 @@ process.stdin.on('end', () => {
     }));
     return;
   }
+  if (mode === 'plain_text') {
+    process.stdout.write('plain text summary from worker');
+    return;
+  }
   if (mode === 'fail_once_then_success') {
     let count = 0;
     if (stateFile && fs.existsSync(stateFile)) {
@@ -92,6 +96,7 @@ fs.writeFileSync(path.join(tempHome, 'settings.json'), JSON.stringify({
 const { initQueueDb, getResponsesForChannel, closeQueueDb } = require('../dist/lib/db.js');
 const { processMessageForTest } = require('../dist/queue-processor.js');
 const { createTaskLinkage, attachGitBranch, getTaskLinkageBySlackThread } = require('../dist/lib/task-linkage.js');
+const { onEvent } = require('../dist/lib/logging.js');
 
 function passthroughIncoming(text) {
     return Promise.resolve({ text });
@@ -128,6 +133,10 @@ function buildSlackDbMessage(id, messageId, text, channelId, threadTs) {
 }
 
 initQueueDb();
+const eventBuffer = [];
+onEvent((type, data) => {
+    eventBuffer.push({ type, data });
+});
 
 test('cursor_cli success attaches branch and PR linkage', async () => {
     process.env.CODER_WORKER_TIMEOUT_MS = '5000';
@@ -350,6 +359,101 @@ test('cursor_cli retry recovers from transient execution failure', async () => {
     assert.equal(linkage.pullRequestUrl, 'https://github.com/acme/repo/pull/77');
 });
 
+test('cursor_cli structured mode rejects plain text stdout', async () => {
+    eventBuffer.length = 0;
+    process.env.CODER_WORKER_OUTPUT_MODE = 'structured';
+    process.env.CODER_WORKER_TIMEOUT_MS = '5000';
+    process.env.CODER_WORKER_MAX_RETRIES = '0';
+    process.env.MOCK_CODER_WORKER_MODE = 'plain_text';
+    const task = createTaskLinkage({
+        title: 'cli structured plain text reject',
+        slackChannelId: 'C-cli-8',
+        slackThreadTs: 'T-cli-8',
+        currentOwnerAgentId: 'coder',
+        status: 'in_progress',
+    });
+    attachGitBranch(task.id, {
+        gitProvider: 'github',
+        repo: 'acme/repo',
+        baseBranch: 'main',
+        workingBranch: '',
+    });
+    const dbMsg = buildSlackDbMessage(9108, 'msg_cli_plaintext_reject', 'Implement plain text reject', 'C-cli-8', 'T-cli-8');
+    await processMessageForTest(dbMsg, [], {
+        runIncomingHooksFn: passthroughIncoming,
+        runOutgoingHooksFn: passthroughOutgoing,
+    });
+    const linkage = getTaskLinkageBySlackThread('C-cli-8', 'T-cli-8');
+    assert.equal(linkage.workingBranch, '');
+    assert.equal(linkage.pullRequestNumber, undefined);
+    const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_plaintext_reject');
+    assert.ok(resp);
+    assert.ok(resp.message.includes('Sorry, I encountered an error processing your request.'));
+    assert.equal(eventBuffer.some(e => e.type === 'worker_output_parse_failed' && e.data.taskId === linkage.taskId), true);
+});
+
+test('cursor_cli summary mode accepts plain text stdout', async () => {
+    eventBuffer.length = 0;
+    process.env.CODER_WORKER_OUTPUT_MODE = 'summary';
+    process.env.CODER_WORKER_TIMEOUT_MS = '5000';
+    process.env.CODER_WORKER_MAX_RETRIES = '0';
+    process.env.MOCK_CODER_WORKER_MODE = 'plain_text';
+    const task = createTaskLinkage({
+        title: 'cli summary plain text accept',
+        slackChannelId: 'C-cli-9',
+        slackThreadTs: 'T-cli-9',
+        currentOwnerAgentId: 'coder',
+        status: 'in_progress',
+    });
+    attachGitBranch(task.id, {
+        gitProvider: 'github',
+        repo: 'acme/repo',
+        baseBranch: 'main',
+        workingBranch: '',
+    });
+    const dbMsg = buildSlackDbMessage(9109, 'msg_cli_plaintext_accept', 'Implement plain text accept', 'C-cli-9', 'T-cli-9');
+    await processMessageForTest(dbMsg, [], {
+        runIncomingHooksFn: passthroughIncoming,
+        runOutgoingHooksFn: passthroughOutgoing,
+    });
+    const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_plaintext_accept');
+    assert.ok(resp);
+    assert.ok(resp.message.includes('plain text summary from worker'));
+    assert.equal(eventBuffer.some(e => e.type === 'worker_succeeded' && e.data.taskId === task.id && e.data.metadata?.summaryOnly === true), true);
+});
+
+test('invalid CODER_WORKER_CLI_ARGS_JSON emits config error event', async () => {
+    eventBuffer.length = 0;
+    process.env.CODER_WORKER_OUTPUT_MODE = 'structured';
+    process.env.CODER_WORKER_CLI_ARGS_JSON = '{"bad":true';
+    process.env.CODER_WORKER_TIMEOUT_MS = '5000';
+    process.env.CODER_WORKER_MAX_RETRIES = '0';
+    process.env.MOCK_CODER_WORKER_MODE = 'success';
+    const task = createTaskLinkage({
+        title: 'cli invalid args config',
+        slackChannelId: 'C-cli-10',
+        slackThreadTs: 'T-cli-10',
+        currentOwnerAgentId: 'coder',
+        status: 'in_progress',
+    });
+    attachGitBranch(task.id, {
+        gitProvider: 'github',
+        repo: 'acme/repo',
+        baseBranch: 'main',
+        workingBranch: '',
+    });
+    const dbMsg = buildSlackDbMessage(9110, 'msg_cli_bad_args', 'Implement bad args', 'C-cli-10', 'T-cli-10');
+    await processMessageForTest(dbMsg, [], {
+        runIncomingHooksFn: passthroughIncoming,
+        runOutgoingHooksFn: passthroughOutgoing,
+    });
+    const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_bad_args');
+    assert.ok(resp);
+    assert.ok(resp.message.includes('Sorry, I encountered an error processing your request.'));
+    assert.equal(eventBuffer.some(e => e.type === 'worker_args_config_invalid' && e.data.taskId === task.id), true);
+    process.env.CODER_WORKER_CLI_ARGS_JSON = JSON.stringify([workerScript]);
+});
+
 test.after(() => {
     closeQueueDb();
     delete process.env.MOCK_CODER_WORKER_MODE;
@@ -359,4 +463,5 @@ test.after(() => {
     delete process.env.CODER_WORKER_CLI_ARGS_JSON;
     delete process.env.CODER_WORKER_TIMEOUT_MS;
     delete process.env.CODER_WORKER_MAX_RETRIES;
+    delete process.env.CODER_WORKER_OUTPUT_MODE;
 });
