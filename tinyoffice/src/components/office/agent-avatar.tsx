@@ -20,6 +20,7 @@ interface AgentAvatarProps {
 export function AgentAvatar({
   id,
   agent,
+  avatar,
   position,
   state,
   activeBubble,
