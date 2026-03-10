@@ -1,123 +1,144 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { timeAgo } from "@/lib/hooks";
 import {
   sendMessage,
   subscribeToEvents,
   type EventData,
 } from "@/lib/api";
+import {
+  type ChatMessage,
+  type DebugEvent,
+  CHAT_MESSAGE_EVENTS,
+  getAgentDisplayName,
+} from "@/lib/chat-types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Send,
-  Bot,
-  Users,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
-  ArrowRight,
-  Radio,
+  Bug,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
-interface FeedItem {
-  id: string;
-  type: "sent" | "event";
-  timestamp: number;
-  data: Record<string, unknown>;
-}
-
-// Chain mechanic events go to status bar, not the main feed
-const STATUS_BAR_EVENTS = new Set([
-  "chain_step_start",
-  "chain_handoff",
-  "team_chain_start",
-  "team_chain_end",
-  "agent_routed",
-  "processor_start",
-  "message_enqueued",
-]);
-
-interface StatusBarEvent {
-  id: string;
-  type: string;
-  agentId?: string;
-  timestamp: number;
-}
-
-export function ChatView({
-  target,
-  targetLabel,
-}: {
-  /** The @prefix target, e.g. "@coder" or "@backend-team". Empty = no target. */
+interface ChatViewProps {
+  /** The @prefix target, e.g. "@coder" or "@backend-team" */
   target: string;
   /** Display label, e.g. "Coder" or "Backend Team" */
   targetLabel: string;
-}) {
+  /** Optional agent role for context display */
+  agentRole?: string;
+}
+
+export function ChatView({ target, targetLabel, agentRole }: ChatViewProps) {
+  const searchParams = useSearchParams();
+  const showDebug = searchParams.get("debug") === "true";
+
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
-  const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [statusEvents, setStatusEvents] = useState<StatusBarEvent[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
   const seenRef = useRef(new Set<string>());
+  // Track response_ready message IDs to deduplicate with chain_step_done
+  const seenResponsesRef = useRef(new Set<string>());
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll on new messages
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [feed.length]);
+  }, [messages.length]);
 
+  // SSE event subscription
   useEffect(() => {
     const unsub = subscribeToEvents(
       (event: EventData) => {
         setConnected(true);
+        const e = event as Record<string, unknown>;
 
-        // Deduplicate by fingerprint (type + timestamp + key data)
-        const fp = `${event.type}:${event.timestamp}:${(event as Record<string, unknown>).messageId ?? ""}:${(event as Record<string, unknown>).agentId ?? ""}`;
+        // Deduplicate
+        const fp = `${event.type}:${event.timestamp}:${e.messageId ?? ""}:${e.agentId ?? ""}`;
         if (seenRef.current.has(fp)) return;
         seenRef.current.add(fp);
-        // Keep the set from growing unbounded
         if (seenRef.current.size > 500) {
           const entries = [...seenRef.current];
           seenRef.current = new Set(entries.slice(entries.length - 300));
         }
 
-        const eventType = String((event as Record<string, unknown>).type || "");
+        const eventType = String(e.type || "");
+        const agentId = e.agentId ? String(e.agentId) : undefined;
+        const responseText = e.responseText ? String(e.responseText) : undefined;
+        const msgText = e.message ? String(e.message) : undefined;
+        const msgId = `${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`;
 
-        // Route chain mechanic events to the status bar
-        if (STATUS_BAR_EVENTS.has(eventType)) {
-          setStatusEvents((prev) =>
-            [
+        // --- Chat message events ---
+        if (CHAT_MESSAGE_EVENTS.has(eventType)) {
+          const content = responseText || msgText;
+          if (content && agentId) {
+            // Deduplicate: if we already saw a response_ready for this agent around this time, skip
+            const dedupeKey = `${agentId}:${content.slice(0, 50)}`;
+            if (seenResponsesRef.current.has(dedupeKey)) return;
+            seenResponsesRef.current.add(dedupeKey);
+            // Trim dedup set
+            if (seenResponsesRef.current.size > 100) {
+              const entries = [...seenResponsesRef.current];
+              seenResponsesRef.current = new Set(entries.slice(entries.length - 50));
+            }
+
+            setMessages((prev) => [
+              ...prev,
               {
-                id: `${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
-                type: eventType,
-                agentId: (event as Record<string, unknown>).agentId
-                  ? String((event as Record<string, unknown>).agentId)
-                  : undefined,
+                id: msgId,
+                role: "agent",
+                agentId,
+                agentName: getAgentDisplayName(agentId),
+                content,
                 timestamp: event.timestamp,
               },
-              ...prev,
-            ].slice(0, 20)
-          );
-          return;
+            ].slice(-200));
+          }
         }
 
-        setFeed((prev) => [
-          ...prev,
+        // --- Incoming user message (from another channel) ---
+        if (eventType === "message_received") {
+          const content = msgText;
+          const sender = e.sender ? String(e.sender) : undefined;
+          if (content && sender) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: msgId,
+                role: "user",
+                content,
+                timestamp: event.timestamp,
+              },
+            ].slice(-200));
+          }
+        }
+
+        // --- All events go to debug stream ---
+        setDebugEvents((prev) => [
           {
-            id: `${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
-            type: "event" as const,
+            id: msgId,
+            type: eventType,
+            agentId,
             timestamp: event.timestamp,
-            data: event as unknown as Record<string, unknown>,
+            detail: responseText || msgText,
+            data: e,
           },
-        ].slice(-200));
+          ...prev,
+        ].slice(0, 100));
       },
       () => setConnected(false)
     );
     return unsub;
   }, []);
 
+  // Send message handler
   const handleSend = useCallback(async () => {
     if (!message.trim() || sending) return;
 
@@ -131,25 +152,27 @@ export function ChatView({
         channel: "web",
       });
 
-      setFeed((prev) => [
+      setMessages((prev) => [
         ...prev,
         {
           id: result.messageId,
-          type: "sent" as const,
+          role: "user",
+          content: message,
           timestamp: Date.now(),
-          data: { message: finalMessage, messageId: result.messageId, target },
         },
       ]);
 
       setMessage("");
     } catch (err) {
-      setFeed((prev) => [
+      setMessages((prev) => [
         ...prev,
         {
           id: `err-${Date.now()}`,
-          type: "event" as const,
+          role: "agent",
+          agentId: "system",
+          agentName: "System",
+          content: `Error: ${(err as Error).message}`,
           timestamp: Date.now(),
-          data: { type: "error", message: (err as Error).message },
         },
       ]);
     } finally {
@@ -166,77 +189,131 @@ export function ChatView({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-6 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">{targetLabel}</span>
-          {target && (
-            <Badge variant="outline" className="text-xs font-mono">{target}</Badge>
+      {/* Chat header */}
+      <div className="flex items-center justify-between border-b px-6 py-3 bg-card">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">{targetLabel}</span>
+            {target && (
+              <span className="text-xs font-mono text-muted-foreground px-1.5 py-0.5 bg-muted rounded">
+                {target}
+              </span>
+            )}
+          </div>
+          {agentRole && (
+            <span className="text-xs text-muted-foreground">
+              • {agentRole}
+            </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`h-1.5 w-1.5 ${connected ? "bg-primary animate-pulse-dot" : "bg-destructive"}`} />
-          <span className="text-[10px] text-muted-foreground">
-            {connected ? "Live" : "Disconnected"}
-          </span>
+        <div className="flex items-center gap-3">
+          {showDebug && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] gap-1"
+              onClick={() => setDebugOpen(!debugOpen)}
+            >
+              <Bug className="h-3 w-3" />
+              Debug ({debugEvents.length})
+              {debugOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </Button>
+          )}
+          <div className="flex items-center gap-1.5">
+            <div className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-500 animate-pulse" : "bg-destructive"}`} />
+            <span className="text-[10px] text-muted-foreground">
+              {connected ? "Live" : "Disconnected"}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Feed — messages flow top to bottom, auto-scroll to newest */}
+      {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {feed.length === 0 ? (
+        {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <Radio className="h-8 w-8 text-muted-foreground/30 mb-3" />
+            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+              <Send className="h-5 w-5 text-primary/60" />
+            </div>
             <p className="text-sm text-muted-foreground">
-              {target ? `Send a message to ${targetLabel}` : "Send a message to get started"}
+              {target ? `Start a conversation with ${targetLabel}` : "Send a message to get started"}
             </p>
             <p className="text-xs text-muted-foreground/60 mt-1">
-              Events will appear here in real time
+              Ctrl+Enter to send
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {feed.map((item) => (
-              <FeedEntry key={item.id} item={item} />
-            ))}
+          <div className="space-y-1">
+            {messages.map((msg, i) => {
+              const prevMsg = i > 0 ? messages[i - 1] : null;
+              const showHeader = !prevMsg
+                || prevMsg.role !== msg.role
+                || (msg.role === "agent" && prevMsg.agentId !== msg.agentId)
+                || (msg.timestamp - prevMsg.timestamp > 60000);
+
+              return (
+                <ChatBubble
+                  key={msg.id}
+                  message={msg}
+                  showHeader={showHeader}
+                />
+              );
+            })}
             <div ref={feedEndRef} />
           </div>
         )}
       </div>
 
-      {/* Status bar for chain events */}
-      {statusEvents.length > 0 && (
-        <div className="border-t bg-muted/30 px-6 py-1.5">
-          <div className="flex items-center gap-2 overflow-x-auto">
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
-              Status
-            </span>
-            {statusEvents.slice(0, 6).map((evt) => (
-              <div key={evt.id} className="flex items-center gap-1 shrink-0">
-                <div className={`h-1.5 w-1.5 shrink-0 ${statusDotColor(evt.type)}`} />
-                <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                  {evt.type.replace(/_/g, " ")}
-                  {evt.agentId ? ` @${evt.agentId}` : ""}
-                </span>
-                <span className="text-[9px] text-muted-foreground/50">{timeAgo(evt.timestamp)}</span>
-                <span className="text-muted-foreground/20 mx-0.5">|</span>
+      {/* Debug panel (hidden by default, ?debug=true to show) */}
+      {showDebug && debugOpen && (
+        <div className="border-t bg-muted/30 max-h-48 overflow-y-auto">
+          <div className="px-4 py-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              Runtime Events
+            </p>
+            {debugEvents.length === 0 ? (
+              <p className="text-[10px] text-muted-foreground/60">No events yet</p>
+            ) : (
+              <div className="space-y-0.5">
+                {debugEvents.slice(0, 30).map((evt) => (
+                  <div key={evt.id} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                    <span className="text-muted-foreground/50 w-12 shrink-0">{timeAgo(evt.timestamp)}</span>
+                    <span className={`font-semibold ${debugEventColor(evt.type)}`}>
+                      {evt.type}
+                    </span>
+                    {evt.agentId && <span className="text-muted-foreground/70">@{evt.agentId}</span>}
+                    {evt.detail && (
+                      <span className="text-muted-foreground/50 truncate max-w-[200px]">
+                        {evt.detail.slice(0, 80)}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}
 
       {/* Composer */}
-      <div className="border-t px-6 py-4">
+      <div className="border-t px-6 py-4 bg-card">
         <div className="flex gap-3 items-end">
-          <Textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={target ? `Message ${targetLabel}...` : "Type a message..."}
-            rows={2}
-            className="flex-1 text-sm resize-none min-h-[44px]"
-          />
+          <div className="flex-1">
+            {target && (
+              <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                <span>Talking to</span>
+                <span className="font-semibold text-foreground">{targetLabel}</span>
+              </p>
+            )}
+            <Textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={target ? `Message ${targetLabel}...` : "Type a message..."}
+              rows={2}
+              className="flex-1 text-sm resize-none min-h-[44px]"
+            />
+          </div>
           <Button
             onClick={handleSend}
             disabled={!message.trim() || sending}
@@ -258,94 +335,50 @@ export function ChatView({
   );
 }
 
-function FeedEntry({ item }: { item: FeedItem }) {
-  const d = item.data;
+/* ─── Chat Bubble Component ─── */
 
-  if (item.type === "sent") {
-    const target = d.target ? String(d.target) : "";
-    return (
-      <div className="flex items-start gap-3 border-b border-border/50 pb-2 animate-slide-up">
-        <Send className="h-3.5 w-3.5 mt-1 text-primary shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-primary">SENT</span>
-            {target && (
-              <Badge variant="outline" className="text-[10px]">
-                {target}
-              </Badge>
-            )}
-          </div>
-          <p className="text-sm text-foreground mt-0.5 break-words whitespace-pre-wrap">
-            {String(d.message ?? "")}
-          </p>
-        </div>
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {timeAgo(item.timestamp)}
-        </span>
-      </div>
-    );
-  }
-
-  const eventType = String(d.type || "unknown");
-
-  const icon = (() => {
-    switch (eventType) {
-      case "response_ready":
-        return <CheckCircle2 className="h-3.5 w-3.5 mt-1 text-emerald-500 shrink-0" />;
-      case "error":
-        return <AlertCircle className="h-3.5 w-3.5 mt-1 text-destructive shrink-0" />;
-      case "agent_routed":
-        return <Bot className="h-3.5 w-3.5 mt-1 text-primary shrink-0" />;
-      case "chain_handoff":
-        return <ArrowRight className="h-3.5 w-3.5 mt-1 text-orange-500 shrink-0" />;
-      case "team_chain_start":
-      case "team_chain_end":
-        return <Users className="h-3.5 w-3.5 mt-1 text-purple-500 shrink-0" />;
-      default:
-        return <div className="h-3.5 w-3.5 mt-1 bg-muted-foreground/40 shrink-0" />;
-    }
-  })();
+function ChatBubble({ message, showHeader }: { message: ChatMessage; showHeader: boolean }) {
+  const isUser = message.role === "user";
 
   return (
-    <div className="flex items-start gap-3 border-b border-border/50 pb-2 animate-slide-up">
-      {icon}
-      <div className="flex-1 min-w-0">
-        <span className="text-xs font-semibold uppercase text-muted-foreground">
-          {eventType.replace(/_/g, " ")}
-        </span>
-        {d.responseText ? (
-          <p className="text-sm text-foreground mt-0.5 break-words whitespace-pre-wrap">
-            {String(d.responseText)}
-          </p>
-        ) : d.message ? (
-          <p className="text-sm text-muted-foreground mt-0.5 break-words whitespace-pre-wrap">
-            {String(d.message)}
-          </p>
-        ) : null}
-        <div className="flex items-center gap-2 mt-1 flex-wrap">
-          {d.agentId ? <Badge variant="secondary" className="text-[10px]">@{String(d.agentId)}</Badge> : null}
-          {d.channel ? <Badge variant="outline" className="text-[10px]">{String(d.channel)}</Badge> : null}
-          {d.sender ? (
-            <span className="text-[10px] text-muted-foreground">from {String(d.sender)}</span>
-          ) : null}
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} ${showHeader ? "mt-4" : "mt-1"} animate-slide-up`}>
+      <div className={`max-w-[75%] ${isUser ? "items-end" : "items-start"}`}>
+        {/* Header: agent name or "You" */}
+        {showHeader && (
+          <div className={`flex items-center gap-2 mb-1 ${isUser ? "justify-end" : "justify-start"}`}>
+            <span className={`text-[11px] font-semibold ${isUser ? "text-primary" : "text-muted-foreground"}`}>
+              {isUser ? "You" : message.agentName || message.agentId || "Agent"}
+            </span>
+            <span className="text-[9px] text-muted-foreground/60">
+              {timeAgo(message.timestamp)}
+            </span>
+          </div>
+        )}
+
+        {/* Message bubble */}
+        <div
+          className={`
+            px-3.5 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap rounded-lg
+            ${isUser
+              ? "bg-primary text-primary-foreground rounded-br-sm"
+              : "bg-muted text-foreground rounded-bl-sm border border-border/60"
+            }
+          `}
+        >
+          {message.content}
         </div>
       </div>
-      <span className="text-xs text-muted-foreground whitespace-nowrap">
-        {timeAgo(item.timestamp)}
-      </span>
     </div>
   );
 }
 
-function statusDotColor(type: string): string {
-  switch (type) {
-    case "agent_routed": return "bg-blue-500";
-    case "chain_step_start": return "bg-yellow-500";
-    case "chain_handoff": return "bg-orange-500";
-    case "team_chain_start": return "bg-purple-500";
-    case "team_chain_end": return "bg-purple-400";
-    case "message_enqueued": return "bg-cyan-500";
-    case "processor_start": return "bg-primary";
-    default: return "bg-muted-foreground/40";
-  }
+/* ─── Debug helpers ─── */
+
+function debugEventColor(type: string): string {
+  if (type.includes("error") || type.includes("failed")) return "text-destructive";
+  if (type.includes("start")) return "text-amber-500";
+  if (type.includes("done") || type.includes("ready") || type.includes("succeeded")) return "text-emerald-500";
+  if (type.includes("handoff")) return "text-orange-500";
+  if (type.includes("routed") || type.includes("enqueued")) return "text-blue-400";
+  return "text-muted-foreground";
 }

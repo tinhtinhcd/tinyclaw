@@ -132,3 +132,27 @@ export function resolveTeamWorkflow(params: {
         stages,
     };
 }
+
+/**
+ * Get allowed handoff targets for an agent based on workflow stages.
+ * Mention-driven: agent may mention only the immediate next role(s) in the stages, or @user.
+ * Skipping ahead (e.g. BA → Coder) is rejected. Used for transition validation only — no auto-advance.
+ */
+export function getAllowedHandoffAgentIds(
+    workflow: ResolvedTeamWorkflow | null,
+    currentAgentId: string,
+    agents: Record<string, AgentConfig>,
+): Set<string> {
+    const allowed = new Set<string>();
+    if (!workflow?.stages?.length) return allowed;
+
+    const currentIdx = workflow.stages.findIndex(s => s.agentId === currentAgentId);
+    if (currentIdx < 0) return allowed;
+
+    const nextIdx = currentIdx + 1;
+    if (nextIdx >= workflow.stages.length) return allowed;
+
+    const nextAgentId = workflow.stages[nextIdx]!.agentId;
+    if (agents[nextAgentId]) allowed.add(nextAgentId);
+    return allowed;
+}

@@ -74,7 +74,7 @@ test('approval gate works with BA and Architect in configured workflow', async (
     const calls = [];
     const invokeAgentFn = async (_agent, agentId) => {
         calls.push(agentId);
-        if (agentId === 'ba') return 'BA clarifies scope and requirements.';
+        if (agentId === 'ba') return 'BA clarifies scope and requirements.\n\n[@scrum_master: please draft the plan]';
         if (agentId === 'scrum_master') return 'Scrum Master plan drafted. Awaiting approval.';
         if (agentId === 'architect') return 'Architect design prepared.';
         if (agentId === 'coder') return 'Coder implemented.';

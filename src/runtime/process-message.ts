@@ -47,7 +47,6 @@ import {
     getResolvedTeamWorkflow,
     handleConversationHandoffs,
     isExplicitApprovalMessage,
-    isExplicitWorkflowStartMessage,
 } from './handoff-runtime';
 
 export interface ProcessMessageOverrides {
@@ -200,12 +199,6 @@ export async function processMessage(
         const shouldReset = fs.existsSync(agentResetFlag);
         if (shouldReset) fs.unlinkSync(agentResetFlag);
 
-        const workflowRequested = !isInternal && (
-            isExplicitWorkflowStartMessage(rawMessage)
-            || isExplicitWorkflowStartMessage(message)
-        );
-        let workflowMode = workflowRequested;
-
         let linkedTaskId: string | undefined;
         if (isInternal && messageData.conversationId) {
             const conv = conversations.get(messageData.conversationId);
@@ -254,7 +247,6 @@ export async function processMessage(
             const linkage = getTaskLinkage(linkedTaskId);
             const awaitingApproval = !!(linkage?.devPipelineAwaitingApproval || linkage?.devPipelineAwaitingPmApproval);
             if (awaitingApproval && firstStageAgentId) {
-                workflowMode = true;
                 const awaitingRole = linkage?.devPipelineAwaitingRole;
                 const awaitingStage = awaitingRole
                     ? resolvedWorkflow?.stages.find(s => s.role === awaitingRole)
@@ -429,22 +421,6 @@ export async function processMessage(
             conv = conversations.get(messageData.conversationId)!;
         } else {
             const convId = `${messageId}_${Date.now()}`;
-            const candidateWorkflow = getResolvedTeamWorkflow(teamContext.teamId, teamContext.team, agents, settings, log);
-            const candidateSequence = candidateWorkflow ? candidateWorkflow.stages.map(s => s.agentId) : null;
-            const candidateRoles = candidateWorkflow ? candidateWorkflow.stages.map(s => s.role) : null;
-            const requiresApprovalIndices = candidateWorkflow
-                ? candidateWorkflow.stages.map((s, idx) => (s.requiresApprovalToAdvance ? idx : -1)).filter(idx => idx >= 0)
-                : [];
-            const sequenceStartIndex = candidateSequence ? candidateSequence.indexOf(agentId) : -1;
-            if (candidateSequence && sequenceStartIndex < 0) {
-                log('WARN', `Team ${teamContext.team.name} has dev_pipeline configured but initial agent '${agentId}' is not in workflow stages; using mention-based flow`);
-            }
-            const enableDevPipeline = workflowMode;
-            const devPipelineSequence = (enableDevPipeline && sequenceStartIndex >= 0) ? candidateSequence : null;
-            const startIndex = sequenceStartIndex >= 0 ? sequenceStartIndex : 0;
-            if (!enableDevPipeline && candidateSequence && sequenceStartIndex >= 0) {
-                log('INFO', `Team ${teamContext.team.name} role mention routed without workflow start intent; running in chat mode for @${agentId}`);
-            }
             conv = {
                 id: convId,
                 channel,
@@ -460,16 +436,6 @@ export async function processMessage(
                 startTime: Date.now(),
                 outgoingMentions: new Map(),
                 pendingAgents: new Set([agentId]),
-                workflowState: devPipelineSequence ? {
-                    type: 'dev_pipeline',
-                    sequence: devPipelineSequence,
-                    currentIndex: startIndex,
-                    stageRoles: candidateRoles || undefined,
-                    requiresApprovalIndices,
-                    waitingForApproval: false,
-                    completedStages: [],
-                    workflowId: candidateWorkflow?.workflowId,
-                } : undefined,
                 taskId: linkedTaskId,
             };
             conversations.set(convId, conv);
@@ -489,6 +455,7 @@ export async function processMessage(
             invocationFailed,
             teams,
             agents,
+            settings,
             messageData,
             log,
         });
