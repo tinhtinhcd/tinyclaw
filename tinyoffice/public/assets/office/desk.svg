@@ -1,4 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="72" height="40" viewBox="0 0 72 40">
-  <rect x="4" y="20" width="64" height="16" rx="2" fill="#78716c"/>
-  <rect x="4" y="20" width="64" height="4" fill="#57534e"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="32" viewBox="0 0 48 32" shape-rendering="crispEdges">
+  <!-- Desk legs -->
+  <rect x="4" y="20" width="4" height="12" fill="#5c4033"/>
+  <rect x="40" y="20" width="4" height="12" fill="#5c4033"/>
+  <!-- Desk surface side -->
+  <rect x="2" y="16" width="44" height="6" fill="#8b6914"/>
+  <!-- Desk surface top -->
+  <rect x="2" y="12" width="44" height="4" fill="#a07d1a"/>
+  <!-- Wood grain highlight -->
+  <rect x="6" y="13" width="12" height="1" fill="#b8922a" opacity="0.6"/>
+  <rect x="24" y="14" width="16" height="1" fill="#b8922a" opacity="0.6"/>
+  <!-- Edge highlight -->
+  <rect x="2" y="12" width="44" height="1" fill="#b8922a"/>
 </svg>

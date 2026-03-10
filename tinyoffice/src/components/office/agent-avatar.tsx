@@ -1,9 +1,11 @@
 "use client";
 
-import { AgentBubble } from "./agent-bubble";
+import { getAnimationClass, getStateIndicator } from "@/lib/office-animations";
 import { getAgentTooltip } from "@/lib/office-utils";
+import { OFFICE_WIDTH, OFFICE_HEIGHT } from "@/lib/office-layout";
 import type { AgentConfig } from "@/lib/api";
 import type { AgentActivityState } from "@/lib/office-state";
+import { AgentBubble } from "./agent-bubble";
 import type { SpeechBubble } from "./agent-bubble";
 
 interface AgentAvatarProps {
@@ -20,20 +22,15 @@ interface AgentAvatarProps {
 export function AgentAvatar({
   id,
   agent,
+  role,
   avatar,
   position,
   state,
   activeBubble,
   onSelect,
 }: AgentAvatarProps) {
-  const animClass =
-    state === "idle"
-      ? "agent-anim-idle"
-      : state === "thinking"
-        ? "agent-anim-thinking"
-        : state === "working"
-          ? "agent-anim-working"
-          : "agent-anim-handoff";
+  const animClass = getAnimationClass(state);
+  const indicator = getStateIndicator(state);
   const tooltip = getAgentTooltip(id, agent, state);
 
   return (
@@ -42,31 +39,42 @@ export function AgentAvatar({
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(e) => e.key === "Enter" && onSelect?.()}
-      className="absolute group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded"
+      className="absolute group cursor-pointer focus:outline-none"
       style={{
-        left: `${position.x * 100}%`,
-        top: `${position.y * 100}%`,
-        transform: "translate(-50%, -50%)",
-        zIndex: Math.floor(position.y * 100) + 10,
+        left: `${(position.x / OFFICE_WIDTH) * 100}%`,
+        top: `${(position.y / OFFICE_HEIGHT) * 100}%`,
+        transform: "translate(-50%, -100%)",
+        zIndex: Math.floor(position.y) + 10,
         transition: "left 0.8s ease-in-out, top 0.8s ease-in-out",
       }}
       title={tooltip}
     >
+      {/* Speech bubble */}
       {activeBubble && <AgentBubble bubble={activeBubble} />}
 
+      {/* State indicator */}
+      {indicator && (
+        <div className="absolute -top-1 -right-1 text-[10px] leading-none z-20 drop-shadow-sm">
+          {indicator}
+        </div>
+      )}
+
+      {/* Sprite */}
       <img
         src={avatar}
         alt={agent.name}
-        className={`w-[32px] h-auto mx-auto ${animClass}`}
+        className={`w-[32px] h-[48px] mx-auto ${animClass}`}
         style={{ imageRendering: "pixelated" }}
         draggable={false}
       />
 
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-card/95 border border-border/60 text-[10px] rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+      {/* Hover tooltip */}
+      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-[#1a1a2e]/95 text-[#e0e0e0] text-[9px] font-mono rounded-sm shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-[#333]/80">
         {tooltip}
       </div>
 
-      <div className="text-[8px] text-center font-medium text-foreground/90 mt-0.5 bg-background/70 px-1 py-0.5 rounded whitespace-nowrap">
+      {/* Name label */}
+      <div className="office-agent-label">
         @{id}
       </div>
     </div>

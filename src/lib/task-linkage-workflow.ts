@@ -83,9 +83,13 @@ export function getRoleCommandContract(role: WorkflowRole): string[] {
     return [...(ROLE_COMMAND_CONTRACT[role] || [])];
 }
 
-function buildRolePromptGuidance(role: WorkflowRole): string[] {
+const NO_ROLE_SIMULATION = 'Never simulate or speak for other roles. You are this role only. Do not say "BA is working", "Coder is implementing", "Reviewer is reviewing", etc. Each role speaks for itself.';
+
+export function buildRolePromptGuidance(role: WorkflowRole): string[] {
+    const base = [NO_ROLE_SIMULATION];
     if (role === 'ba') {
         return [
+            ...base,
             'BA guidance: clarify business goals and missing requirements before implementation.',
             'Identify ambiguity and ask concise clarifying questions when requirements are underspecified.',
             'Produce compact requirement analysis with assumptions and acceptance criteria/user-story style outcomes.',
@@ -105,6 +109,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     }
     if (role === 'scrum_master' || role === 'pm') {
         return [
+            ...base,
             "Scrum Master guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             'Reuse existing Linear linkage when present.',
             'Avoid emitting commands when title/description/teamId are missing.',
@@ -127,6 +132,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     }
     if (role === 'architect') {
         return [
+            ...base,
             'Architect guidance: produce implementation-oriented technical design before coding.',
             'Define components/modules/services, API/data flow, and major boundaries.',
             'Mention key tradeoffs and technical risks briefly.',
@@ -147,6 +153,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     }
     if (role === 'reviewer') {
         return [
+            ...base,
             'Reviewer guidance: read-only linkage usage.',
             'Handoff: when ready, mention next role (e.g. [@tester: message]). If blocked or need clarification, mention [@user: question]. You may stop without handoff when appropriate.',
             'Use linked Linear/PR context in review output.',
@@ -158,6 +165,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     }
     if (role === 'tester') {
         return [
+            ...base,
             'Tester guidance: read-only linkage usage.',
             'Handoff: when done, you may mention [@user: summary] or stop without handoff. Mention next role only if workflow continues.',
             'Use linked Linear/PR context in testing output.',
@@ -168,6 +176,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
         ];
     }
     return [
+        ...base,
         'Unknown-role guidance: do not emit task_linkage mutation commands.',
     ];
 }

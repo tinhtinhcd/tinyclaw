@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <!-- Wall base -->
+  <rect width="32" height="32" fill="#8b9bb4"/>
+  <!-- Brick pattern row 1 -->
+  <rect x="0" y="0" width="16" height="8" fill="#7d8da6" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="16" y="0" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <!-- Brick pattern row 2 (offset) -->
+  <rect x="-8" y="8" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="8" y="8" width="16" height="8" fill="#7d8da6" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="24" y="8" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <!-- Brick pattern row 3 -->
+  <rect x="0" y="16" width="16" height="8" fill="#7d8da6" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="16" y="16" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <!-- Brick pattern row 4 (offset) -->
+  <rect x="-8" y="24" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="8" y="24" width="16" height="8" fill="#7d8da6" stroke="#6b7b94" stroke-width="1"/>
+  <rect x="24" y="24" width="16" height="8" fill="#8393ac" stroke="#6b7b94" stroke-width="1"/>
+  <!-- Baseboard -->
+  <rect x="0" y="28" width="32" height="4" fill="#5c6b84"/>
+</svg>

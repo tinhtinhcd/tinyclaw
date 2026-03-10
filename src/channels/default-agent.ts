@@ -132,7 +132,13 @@ export function applyDefaultAgent(
         return { message: messageText, switchNotification: null };
     }
 
-    // No @-prefix — apply stored default if any
+    // No @-prefix — apply stored default only if message has NO @mentions anywhere
+    // Strict mention-driven: if user wrote "hello @ScrumMaster", do NOT prepend default
+    const hasMention = /@(\w[\w-]*)/.test(messageText);
+    if (hasMention) {
+        return { message: messageText, switchNotification: null };
+    }
+
     const storedDefault = getDefaults(settingsFile)[chatKey];
     if (storedDefault) {
         return { message: `@${storedDefault} ${messageText}`, switchNotification: null };

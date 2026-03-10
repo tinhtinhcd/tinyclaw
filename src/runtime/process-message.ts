@@ -5,6 +5,7 @@ import { getAgents, getSettings, getTeams } from '../lib/config';
 import { emitEvent, log } from '../lib/logging';
 import {
     parseAgentRouting,
+    NO_AGENT_MENTIONED,
     findTeamForAgent,
     getAgentResetFlag,
     extractChatRoomMessages,
@@ -149,7 +150,24 @@ export async function processMessage(
                 log('INFO', `Slack inbound bot '${inboundBotId}' mapped to agent '${botMappedAgentId}'`);
             }
         }
-        if (!agents[agentId]) {
+        if (agentId === NO_AGENT_MENTIONED || !agents[agentId]) {
+            if (agentId === NO_AGENT_MENTIONED) {
+                log('INFO', `No agent mentioned in message; skipping (strict mention-driven execution)`);
+                await enqueueDirectResponse({
+                    response: 'Please mention an agent with @agent_id (e.g. @ScrumMaster, @BA) to route your message.',
+                    channel,
+                    sender,
+                    senderId: messageData.senderId ?? undefined,
+                    rawMessage,
+                    messageId,
+                    agentId: '',
+                    linkedTaskId: undefined,
+                    runOutgoingHooksFn: overrides.runOutgoingHooksFn,
+                    log,
+                });
+                dbCompleteMessage(dbMsg.id);
+                return;
+            }
             agentId = 'default';
             message = rawMessage;
         }

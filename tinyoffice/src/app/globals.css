@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 @import "tailwindcss";
 
 @theme inline {
@@ -22,6 +23,7 @@
   --color-ring: var(--ring);
   --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --font-pixel: "Press Start 2P", monospace;
   --radius-sm: 0px;
   --radius-md: 0px;
   --radius-lg: 0px;
@@ -98,7 +100,156 @@ body {
   background: var(--foreground);
 }
 
-/* Animation keyframes */
+/* ══════════════════════════════════════════════
+   PIXEL OFFICE — Scene Styles
+   ══════════════════════════════════════════════ */
+
+/* Scene container — maintains aspect ratio & centers */
+.office-scene-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.office-scene {
+  position: relative;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 3px solid #2a2a2e;
+  box-shadow:
+    0 0 0 1px #444,
+    4px 4px 0 0 #1a1a1e;
+  background: #3d5640;
+  image-rendering: pixelated;
+}
+
+/* Agent name label */
+.office-agent-label {
+  text-align: center;
+  font-family: var(--font-pixel);
+  font-size: 5px;
+  color: #e0e0e0;
+  background: #1a1a2ecc;
+  padding: 1px 4px;
+  margin-top: 2px;
+  white-space: nowrap;
+  border: 1px solid #333;
+}
+
+/* Zone labels */
+.office-zone-label {
+  font-family: var(--font-pixel);
+  font-size: 6px;
+  color: #ffffffaa;
+  text-shadow: 1px 1px 0 #00000088;
+  white-space: nowrap;
+}
+
+/* Speech bubble */
+.office-speech-bubble {
+  position: relative;
+  max-width: 280px;
+  min-width: 80px;
+  background: #1a1a2eee;
+  border: 2px solid #444;
+  color: #e0e0e0;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  padding: 6px 8px;
+}
+
+/* Activity rail */
+.office-activity-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #111114;
+  border: 2px solid #2a2a2e;
+  border-top: none;
+  box-shadow: 0 2px 0 0 #1a1a1e;
+}
+
+.office-activity-title {
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  color: #66ff66;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Sidebar */
+.office-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #111114;
+  border: 2px solid #2a2a2e;
+  border-left: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ══════════════════════════════════════════════
+   PIXEL OFFICE — Agent Animations
+   ══════════════════════════════════════════════ */
+
+/* Idle: gentle breathing bob */
+@keyframes agent-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+
+/* Thinking: subtle pulse with slight color shift */
+@keyframes agent-thinking {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.85; filter: brightness(1.1); }
+}
+
+/* Working: rapid typing bob */
+@keyframes agent-working {
+  0% { transform: translateY(0); }
+  12% { transform: translateY(-1px); }
+  25% { transform: translateY(0); }
+  37% { transform: translateY(-1px); }
+  50% { transform: translateY(0); }
+  100% { transform: translateY(0); }
+}
+
+/* Handoff walking: step bounce */
+@keyframes agent-walking {
+  0% { transform: translateY(0) scaleX(1); }
+  25% { transform: translateY(-3px) scaleX(1); }
+  50% { transform: translateY(0) scaleX(-1); }
+  75% { transform: translateY(-3px) scaleX(-1); }
+  100% { transform: translateY(0) scaleX(1); }
+}
+
+.agent-anim-idle {
+  animation: agent-idle 2.5s ease-in-out infinite;
+}
+
+.agent-anim-thinking {
+  animation: agent-thinking 1.2s ease-in-out infinite;
+}
+
+.agent-anim-working {
+  animation: agent-working 0.6s steps(1) infinite;
+}
+
+.agent-anim-walking {
+  animation: agent-walking 0.5s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════
+   GENERAL — Reusable animations
+   ══════════════════════════════════════════════ */
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -123,44 +274,4 @@ body {
 
 .animate-dash {
   animation: dash 1s linear infinite;
-}
-
-/* Agent activity animations */
-@keyframes agent-idle {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
-}
-
-@keyframes agent-thinking {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.85; transform: scale(1.02); }
-}
-
-@keyframes agent-working {
-  0%, 100% { transform: translateY(0) scale(1); }
-  25% { transform: translateY(-1px) scale(1.01); }
-  75% { transform: translateY(1px) scale(0.99); }
-}
-
-@keyframes agent-handoff {
-  0%, 100% { transform: translateX(0) translateY(0); }
-  25% { transform: translateX(2px) translateY(-2px); }
-  50% { transform: translateX(-1px) translateY(1px); }
-  75% { transform: translateX(-2px) translateY(-1px); }
-}
-
-.agent-anim-idle {
-  animation: agent-idle 2.5s ease-in-out infinite;
-}
-
-.agent-anim-thinking {
-  animation: agent-thinking 1.2s ease-in-out infinite;
-}
-
-.agent-anim-working {
-  animation: agent-working 0.8s ease-in-out infinite;
-}
-
-.agent-anim-handoff {
-  animation: agent-handoff 1s ease-in-out infinite;
 }

@@ -1,5 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="40" viewBox="0 0 36 40">
-  <circle cx="18" cy="14" r="10" fill="#0ea5e9"/>
-  <rect x="8" y="24" width="20" height="16" rx="4" fill="#0ea5e9"/>
-  <circle cx="14" cy="12" r="2" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24" shape-rendering="crispEdges">
+  <!-- Shadow -->
+  <ellipse cx="8" cy="23" rx="5" ry="1" fill="#00000033"/>
+  <!-- Body (formal) -->
+  <rect x="4" y="12" width="8" height="8" fill="#9f1239"/>
+  <rect x="5" y="12" width="6" height="8" fill="#be123c"/>
+  <!-- Shirt collar -->
+  <rect x="6" y="12" width="4" height="2" fill="#fff"/>
+  <!-- Bow tie -->
+  <rect x="7" y="12" width="2" height="2" fill="#e11d48"/>
+  <!-- Arms -->
+  <rect x="2" y="13" width="2" height="5" fill="#9f1239"/>
+  <rect x="12" y="13" width="2" height="5" fill="#9f1239"/>
+  <!-- Head -->
+  <rect x="4" y="2" width="8" height="10" fill="#f0c8a0"/>
+  <!-- Hair (neat) -->
+  <rect x="4" y="2" width="8" height="3" fill="#6b4423"/>
+  <rect x="4" y="3" width="1" height="2" fill="#6b4423"/>
+  <rect x="11" y="3" width="1" height="2" fill="#6b4423"/>
+  <!-- Eyes -->
+  <rect x="6" y="7" width="1" height="1" fill="#1a1a2e"/>
+  <rect x="9" y="7" width="1" height="1" fill="#1a1a2e"/>
+  <!-- Slight frown (critical eye) -->
+  <rect x="7" y="9" width="2" height="1" fill="#c4956a"/>
+  <!-- Monocle -->
+  <rect x="8" y="6" width="3" height="3" fill="none" stroke="#fbbf24" stroke-width="0.8"/>
+  <!-- Legs -->
+  <rect x="5" y="20" width="2" height="4" fill="#2d3748"/>
+  <rect x="9" y="20" width="2" height="4" fill="#2d3748"/>
+  <!-- Shoes (formal) -->
+  <rect x="4" y="22" width="3" height="2" fill="#1a1a2e"/>
+  <rect x="9" y="22" width="3" height="2" fill="#1a1a2e"/>
 </svg>

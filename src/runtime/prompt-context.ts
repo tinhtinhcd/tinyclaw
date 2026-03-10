@@ -1,4 +1,5 @@
 import { AgentConfig, TeamConfig } from '../lib/types';
+import { buildRolePromptGuidance } from '../lib/task-linkage-workflow';
 import {
     applyRoleTaskLinkageState,
     buildRoleFetchedPrContext,
@@ -229,6 +230,14 @@ export async function enrichPromptContext(params: {
             });
             const appended = budgeted.map(b => b.content).join('\n\n------\n\n');
             message = `${message}\n\n------\n\n${appended}`;
+        }
+    }
+
+    // When no task linkage, inject role guidance (including no-role-simulation) so agents never simulate other roles
+    if (!linkedTaskId) {
+        const roleGuidance = buildRolePromptGuidance(role);
+        if (roleGuidance.length > 0) {
+            message = `${roleGuidance.join('\n')}\n\n------\n\n${message}`;
         }
     }
 

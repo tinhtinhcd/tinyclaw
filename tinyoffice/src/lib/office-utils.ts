@@ -13,7 +13,7 @@ export function getAgentTooltip(
   agent: AgentConfig,
   state: AgentActivityState
 ): string {
-  const role = (agent.role || inferRoleFromAgentId(agentId)).toLowerCase().replace(" ", "_");
+  const role = ((agent as { role?: string }).role || inferRoleFromAgentId(agentId)).toLowerCase().replace(" ", "_");
   const r = role === "pm" ? "scrum_master" : role;
   return `@${agentId}: ${getLabelForState(r, state)}`;
 }

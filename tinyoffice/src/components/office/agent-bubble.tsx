@@ -15,28 +15,34 @@ export function AgentBubble({ bubble }: { bubble: SpeechBubble }) {
 
   return (
     <div
-      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 animate-slide-up"
+      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 animate-slide-up"
       style={{ zIndex: 100 }}
     >
-      <div className="relative max-w-[320px] min-w-[100px] bg-card border border-border/80 text-[11px] leading-relaxed px-2.5 py-1.5 rounded shadow-md">
-        <div className="break-words text-foreground space-y-0.5">
+      <div className="office-speech-bubble">
+        <div className="break-words space-y-0.5">
           {segments.map((seg, i) =>
             seg.type === "mention" ? (
               <div key={i}>
-                <span className="font-semibold text-primary">@{seg.agent}</span>
-                <span className="text-muted-foreground">: </span>
+                <span className="font-bold text-[#66ff66]">@{seg.agent}</span>
+                <span className="text-[#999]">: </span>
                 <span>
-                  {seg.text.length > 120 ? seg.text.slice(0, 120) + "..." : seg.text}
+                  {seg.text.length > 100 ? seg.text.slice(0, 100) + "..." : seg.text}
                 </span>
               </div>
             ) : (
               <span key={i}>
-                {seg.text.length > 160 ? seg.text.slice(0, 160) + "..." : seg.text}
+                {seg.text.length > 140 ? seg.text.slice(0, 140) + "..." : seg.text}
               </span>
             )
           )}
         </div>
-        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-card border-b border-r border-border/80 rotate-45" />
+        {/* Pixel speech bubble tail */}
+        <div className="absolute -bottom-[6px] left-1/2 -translate-x-1/2 w-[8px] h-[6px]"
+          style={{
+            background: "#1a1a2e",
+            clipPath: "polygon(0 0, 100% 0, 50% 100%)",
+          }}
+        />
       </div>
     </div>
   );

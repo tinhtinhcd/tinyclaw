@@ -8,23 +8,33 @@ import {
   getDeskForRole,
   getLayoutForAgent,
   inferRoleFromAgentId,
+  getZoneForRole,
+  OFFICE_WIDTH,
+  OFFICE_HEIGHT,
 } from "./office-layout";
 
 describe("office-layout", () => {
   describe("getDeskForRole", () => {
-    it("returns desk position for known roles", () => {
+    it("returns desk position for known roles within scene bounds", () => {
       const desk = getDeskForRole("coder");
       expect(desk).toHaveProperty("x");
       expect(desk).toHaveProperty("y");
       expect(desk.x).toBeGreaterThanOrEqual(0);
-      expect(desk.x).toBeLessThanOrEqual(1);
+      expect(desk.x).toBeLessThanOrEqual(OFFICE_WIDTH);
       expect(desk.y).toBeGreaterThanOrEqual(0);
-      expect(desk.y).toBeLessThanOrEqual(1);
+      expect(desk.y).toBeLessThanOrEqual(OFFICE_HEIGHT);
     });
 
     it("falls back to coder for unknown role", () => {
       const desk = getDeskForRole("unknown_role");
       expect(desk).toEqual(getDeskForRole("coder"));
+    });
+
+    it("returns unique positions for each known role", () => {
+      const roles = ["ba", "scrum_master", "architect", "coder", "reviewer", "tester"];
+      const positions = roles.map((r) => getDeskForRole(r));
+      const unique = new Set(positions.map((p) => `${p.x},${p.y}`));
+      expect(unique.size).toBe(roles.length);
     });
   });
 
@@ -37,12 +47,25 @@ describe("office-layout", () => {
     });
   });
 
+  describe("getZoneForRole", () => {
+    it("returns zone name for known roles", () => {
+      expect(getZoneForRole("ba")).toBe("Analysis Corner");
+      expect(getZoneForRole("coder")).toBe("Implementation Desk");
+      expect(getZoneForRole("tester")).toBe("Testing Desk");
+    });
+
+    it("falls back to Office for unknown role", () => {
+      expect(getZoneForRole("mystery")).toBe("Office");
+    });
+  });
+
   describe("getLayoutForAgent", () => {
-    it("returns layout with role, desk, home", () => {
+    it("returns layout with role, desk, home, zone", () => {
       const layout = getLayoutForAgent("coder-1", "coder");
       expect(layout).toHaveProperty("role", "coder");
       expect(layout).toHaveProperty("desk");
       expect(layout).toHaveProperty("home");
+      expect(layout).toHaveProperty("zone");
     });
   });
 
@@ -82,6 +105,8 @@ describe("office-layout", () => {
       const home = getHomeForRole(targetRole);
       expect(home.x).toBeGreaterThanOrEqual(0);
       expect(home.y).toBeGreaterThanOrEqual(0);
+      expect(home.x).toBeLessThanOrEqual(OFFICE_WIDTH);
+      expect(home.y).toBeLessThanOrEqual(OFFICE_HEIGHT);
     });
   });
 });

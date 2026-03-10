@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64" viewBox="0 0 96 64" shape-rendering="crispEdges">
+  <!-- Outer border -->
+  <rect x="0" y="0" width="96" height="64" fill="#8b4513"/>
+  <!-- Inner fill -->
+  <rect x="4" y="4" width="88" height="56" fill="#b8860b"/>
+  <!-- Inner border -->
+  <rect x="8" y="8" width="80" height="48" fill="#cd9b1d"/>
+  <!-- Center pattern -->
+  <rect x="12" y="12" width="72" height="40" fill="#daa520"/>
+  <!-- Diamond pattern center -->
+  <rect x="40" y="24" width="16" height="16" fill="#cd9b1d" transform="rotate(45 48 32)"/>
+  <!-- Corner accents -->
+  <rect x="14" y="14" width="4" height="4" fill="#8b4513"/>
+  <rect x="78" y="14" width="4" height="4" fill="#8b4513"/>
+  <rect x="14" y="46" width="4" height="4" fill="#8b4513"/>
+  <rect x="78" y="46" width="4" height="4" fill="#8b4513"/>
+</svg>

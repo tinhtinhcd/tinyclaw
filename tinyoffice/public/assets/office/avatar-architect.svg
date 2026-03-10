@@ -1,5 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="40" viewBox="0 0 36 40">
-  <circle cx="18" cy="14" r="10" fill="#8b5cf6"/>
-  <rect x="8" y="24" width="20" height="16" rx="4" fill="#8b5cf6"/>
-  <circle cx="14" cy="12" r="2" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="24" viewBox="0 0 16 24" shape-rendering="crispEdges">
+  <!-- Shadow -->
+  <ellipse cx="8" cy="23" rx="5" ry="1" fill="#00000033"/>
+  <!-- Body -->
+  <rect x="4" y="12" width="8" height="8" fill="#7c3aed"/>
+  <rect x="5" y="12" width="6" height="8" fill="#8b5cf6"/>
+  <!-- Arms -->
+  <rect x="2" y="13" width="2" height="5" fill="#7c3aed"/>
+  <rect x="12" y="13" width="2" height="5" fill="#7c3aed"/>
+  <!-- Head -->
+  <rect x="4" y="3" width="8" height="9" fill="#f0c8a0"/>
+  <!-- Beret -->
+  <rect x="3" y="1" width="10" height="3" fill="#581c87"/>
+  <rect x="5" y="0" width="6" height="2" fill="#581c87"/>
+  <rect x="7" y="0" width="2" height="1" fill="#6b21a8"/>
+  <!-- Eyes -->
+  <rect x="6" y="7" width="1" height="1" fill="#1a1a2e"/>
+  <rect x="9" y="7" width="1" height="1" fill="#1a1a2e"/>
+  <!-- Smile -->
+  <rect x="7" y="9" width="2" height="1" fill="#c4956a"/>
+  <!-- Pencil behind ear -->
+  <rect x="12" y="4" width="1" height="4" fill="#fbbf24"/>
+  <rect x="12" y="3" width="1" height="1" fill="#1a1a2e"/>
+  <!-- Legs -->
+  <rect x="5" y="20" width="2" height="4" fill="#2d3748"/>
+  <rect x="9" y="20" width="2" height="4" fill="#2d3748"/>
+  <!-- Shoes -->
+  <rect x="4" y="22" width="3" height="2" fill="#1a1a2e"/>
+  <rect x="9" y="22" width="3" height="2" fill="#1a1a2e"/>
 </svg>

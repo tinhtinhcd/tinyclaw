@@ -23,6 +23,7 @@
     "test:workflow-config:coder-delegation": "npm run build:main && node --test tests/config-driven-workflow-coder-delegation-runtime.test.js",
     "test:ba-architect:guidance": "npm run build:main && node --test tests/ba-architect-guidance.test.js",
     "test:ba-architect:approval": "npm run build:main && node --test tests/ba-architect-approval-gate-runtime.test.js",
+    "test:mention-driven": "npm run build:main && node --test tests/mention-driven-routing.test.js",
     "whatsapp": "node dist/channels/whatsapp-client.js",
     "discord": "node dist/channels/discord-client.js",
     "telegram": "node dist/channels/telegram-client.js",

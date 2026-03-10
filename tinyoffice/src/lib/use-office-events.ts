@@ -97,7 +97,7 @@ export function useOfficeEvents(agents: Record<string, AgentConfig> | undefined)
             setAgentStates((prev) => ({ ...prev, [r.agentId]: r.state }));
             if (r.state === "handoff" && r.targetAgentId) {
               const targetRole =
-                (agentsRef.current?.[r.targetAgentId] as AgentConfig)?.role ||
+                (agentsRef.current?.[r.targetAgentId] as AgentConfig & { role?: string })?.role ||
                 inferRoleFromAgentId(r.targetAgentId);
               setHandoffTargets((prev) => ({
                 ...prev,
@@ -125,7 +125,7 @@ export function useOfficeEvents(agents: Record<string, AgentConfig> | undefined)
           if (toAgent) setAgentStates((prev) => ({ ...prev, [toAgent]: "thinking" }));
           if (fromAgent && toAgent) {
             const targetRole =
-              (agentsRef.current?.[toAgent] as AgentConfig)?.role ||
+              (agentsRef.current?.[toAgent] as AgentConfig & { role?: string })?.role ||
               inferRoleFromAgentId(toAgent);
             setHandoffTargets((prev) => ({
               ...prev,

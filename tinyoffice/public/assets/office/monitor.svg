@@ -1,5 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="28" height="24" viewBox="0 0 28 24">
-  <rect x="2" y="2" width="24" height="18" rx="2" fill="#1c1917"/>
-  <rect x="4" y="4" width="20" height="14" fill="#3b82f6" opacity="0.3"/>
-  <rect x="10" y="20" width="8" height="4" fill="#57534e"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="18" viewBox="0 0 20 18" shape-rendering="crispEdges">
+  <!-- Monitor bezel -->
+  <rect x="1" y="0" width="18" height="14" fill="#2a2a2a"/>
+  <!-- Screen -->
+  <rect x="3" y="2" width="14" height="10" fill="#1a3a2a"/>
+  <!-- Screen glow lines (code effect) -->
+  <rect x="4" y="3" width="8" height="1" fill="#33cc66" opacity="0.8"/>
+  <rect x="4" y="5" width="10" height="1" fill="#33cc66" opacity="0.6"/>
+  <rect x="6" y="7" width="6" height="1" fill="#33cc66" opacity="0.5"/>
+  <rect x="4" y="9" width="9" height="1" fill="#33cc66" opacity="0.4"/>
+  <!-- Screen reflection -->
+  <rect x="14" y="2" width="2" height="3" fill="#33cc66" opacity="0.1"/>
+  <!-- Stand -->
+  <rect x="8" y="14" width="4" height="2" fill="#333333"/>
+  <!-- Base -->
+  <rect x="6" y="16" width="8" height="2" fill="#3a3a3a"/>
 </svg>

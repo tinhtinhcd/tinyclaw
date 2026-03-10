@@ -262,44 +262,99 @@ export function getAgentResetFlag(agentId: string, workspacePath: string): strin
     return path.join(workspacePath, agentId, 'reset_flag');
 }
 
+/** Sentinel when no agent is mentioned — strict mention-driven: do not run any agent */
+export const NO_AGENT_MENTIONED = 'none';
+
 /**
- * Parse @agent_id or @team_id prefix from a message.
- * Returns { agentId, message, isTeam } where message has the prefix stripped.
+ * Extract all @mentions from message (standalone @word, not inside brackets).
+ * Returns unique mentions in order of first appearance.
+ */
+function extractMentions(text: string): string[] {
+    const seen = new Set<string>();
+    const results: string[] = [];
+    const regex = /@(\w[\w-]*)/g;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+        const id = m[1].toLowerCase();
+        if (id !== 'user' && id !== 'default' && !seen.has(id)) {
+            seen.add(id);
+            results.push(id);
+        }
+    }
+    return results;
+}
+
+/**
+ * Resolve a candidate mention to an agent id or team leader.
+ * Returns { agentId, isTeam } or null if no match.
+ */
+function normalizeForMatch(s: string): string {
+    return s.toLowerCase().replace(/[\s_-]/g, '');
+}
+
+function resolveMention(
+    candidateId: string,
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>
+): { agentId: string; isTeam: boolean } | null {
+    if (agents[candidateId]) {
+        return { agentId: candidateId, isTeam: false };
+    }
+    if (teams[candidateId]) {
+        return { agentId: teams[candidateId].leader_agent, isTeam: true };
+    }
+    const norm = normalizeForMatch(candidateId);
+    for (const [id, config] of Object.entries(agents)) {
+        if (normalizeForMatch(id) === norm || normalizeForMatch(config.name || '') === norm) {
+            return { agentId: id, isTeam: false };
+        }
+    }
+    for (const [id, config] of Object.entries(teams)) {
+        if (normalizeForMatch(id) === norm || normalizeForMatch(config.name || '') === norm) {
+            return { agentId: config.leader_agent, isTeam: true };
+        }
+    }
+    return null;
+}
+
+/**
+ * Parse @agent_id or @team_id from a message.
+ * Strict mention-driven: only runs agents that are explicitly mentioned.
+ *
+ * - @ at start: same as before (prefix routing)
+ * - @ anywhere in message: first valid mention wins
+ * - No valid mention: returns NO_AGENT_MENTIONED — no agent runs
  */
 export function parseAgentRouting(
     rawMessage: string,
     agents: Record<string, AgentConfig>,
     teams: Record<string, TeamConfig> = {}
 ): { agentId: string; message: string; isTeam?: boolean } {
-    // Match @agent_id at the start of the message
-    const match = rawMessage.match(/^@(\S+)\s+([\s\S]*)$/);
-    if (match) {
-        const candidateId = match[1].toLowerCase();
-        const message = match[2];
+    // 1. Match @agent_id or @team_id at the start (legacy prefix)
+    const prefixMatch = rawMessage.match(/^@(\S+)\s+([\s\S]*)$/);
+    if (prefixMatch) {
+        const candidateId = prefixMatch[1].toLowerCase();
+        const message = prefixMatch[2];
 
-        // Check agent IDs
-        if (agents[candidateId]) {
-            return { agentId: candidateId, message };
+        if (candidateId === 'default') {
+            return { agentId: NO_AGENT_MENTIONED, message: rawMessage };
         }
 
-        // Check team IDs — resolve to leader agent
-        if (teams[candidateId]) {
-            return { agentId: teams[candidateId].leader_agent, message, isTeam: true };
-        }
-
-        // Match by agent name (case-insensitive)
-        for (const [id, config] of Object.entries(agents)) {
-            if (config.name.toLowerCase() === candidateId) {
-                return { agentId: id, message };
-            }
-        }
-
-        // Match by team name (case-insensitive)
-        for (const [, config] of Object.entries(teams)) {
-            if (config.name.toLowerCase() === candidateId) {
-                return { agentId: config.leader_agent, message, isTeam: true };
-            }
+        const resolved = resolveMention(candidateId, agents, teams);
+        if (resolved) {
+            return { agentId: resolved.agentId, message, isTeam: resolved.isTeam };
         }
     }
-    return { agentId: 'default', message: rawMessage };
+
+    // 2. Scan for @mentions anywhere in the message
+    const mentions = extractMentions(rawMessage);
+    for (const candidateId of mentions) {
+        const resolved = resolveMention(candidateId, agents, teams);
+        if (resolved) {
+            return { agentId: resolved.agentId, message: rawMessage, isTeam: resolved.isTeam };
+        }
+    }
+
+    // 3. No valid mention — strict: do not run any agent
+    return { agentId: NO_AGENT_MENTIONED, message: rawMessage };
 }
