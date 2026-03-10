@@ -72,6 +72,8 @@ export interface TaskLinkage {
     // Legacy approval flag kept for backward compatibility.
     devPipelineAwaitingPmApproval?: boolean;
     devPipelineApprovedAt?: number;
+    /** Set when agent hands off to @user; workflow pauses until user responds */
+    workflowWaitingForUserInput?: boolean;
 }
 
 export interface Task {

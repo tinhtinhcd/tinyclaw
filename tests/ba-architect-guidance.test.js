@@ -26,6 +26,10 @@ test('BA role gets BA-specific guidance', () => {
     assert.ok(ctx.includes('BA guidance: clarify business goals'));
     assert.ok(ctx.includes('acceptance criteria/user-story style outcomes'));
     assert.ok(ctx.includes('Do not behave like coder/reviewer/tester.'));
+    assert.ok(ctx.includes('[BA_REQUIREMENTS]'));
+    assert.ok(ctx.includes('Business Goal:'));
+    assert.ok(ctx.includes('Acceptance Criteria:'));
+    assert.ok(ctx.includes('[/BA_REQUIREMENTS]'));
 });
 
 test('Architect role gets Architect-specific guidance', () => {
@@ -37,4 +41,8 @@ test('Architect role gets Architect-specific guidance', () => {
     assert.ok(ctx.includes('Architect guidance: produce implementation-oriented technical design before coding.'));
     assert.ok(ctx.includes('Define components/modules/services'));
     assert.ok(ctx.includes('Do not act as reviewer/tester'));
+    assert.ok(ctx.includes('[ARCHITECT_DESIGN]'));
+    assert.ok(ctx.includes('System Goal:'));
+    assert.ok(ctx.includes('Implementation Plan:'));
+    assert.ok(ctx.includes('[/ARCHITECT_DESIGN]'));
 });

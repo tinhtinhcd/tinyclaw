@@ -29,6 +29,8 @@ function deriveMappedWorkflowRole(
 const DEFAULT_PROMPT_CONTEXT_MAX_CHARS = 12000;
 const CONTEXT_PRIORITIES: Record<string, number> = {
     TASK_LINKAGE_CONTEXT: 100,
+    BA_REQUIREMENTS_CONTEXT: 80,
+    ARCHITECT_DESIGN_CONTEXT: 75,
     REVIEWER_LINKED_PR_CONTEXT: 70,
     TESTER_LINKED_PR_CONTEXT: 70,
     REVIEWER_FETCHED_PR_CONTEXT: 50,
@@ -52,6 +54,19 @@ function splitFetchedAndSynthBlocks(content: string): { fetched: string; testerS
     return { fetched, testerSynthesized };
 }
 
+function extractLatestStructuredBlock(outputs: string[], startTag: string, endTag: string): string {
+    if (!outputs || outputs.length === 0) return '';
+    const pattern = new RegExp(`\\${startTag}[\\s\\S]*?\\${endTag}`, 'g');
+    for (let i = outputs.length - 1; i >= 0; i--) {
+        const text = outputs[i] || '';
+        const matches = text.match(pattern);
+        if (matches && matches.length > 0) {
+            return matches[matches.length - 1].trim();
+        }
+    }
+    return '';
+}
+
 export async function enrichPromptContext(params: {
     message: string;
     linkedTaskId?: string;
@@ -64,6 +79,7 @@ export async function enrichPromptContext(params: {
         role: WorkflowRole,
         log: (level: string, msg: string) => void,
     ) => Promise<string>;
+    upstreamOutputs?: string[];
 }): Promise<{ message: string; role: WorkflowRole }> {
     const {
         linkedTaskId, agentId, agent, teamContext, log,
@@ -126,6 +142,40 @@ export async function enrichPromptContext(params: {
                 name: 'TESTER_SYNTHESIZED_FOCUS',
                 content: linkedSynthesized,
                 priority: CONTEXT_PRIORITIES.TESTER_SYNTHESIZED_FOCUS,
+            });
+        }
+
+        const upstreamOutputs = params.upstreamOutputs || [];
+        const latestBaRequirements = extractLatestStructuredBlock(
+            upstreamOutputs,
+            '[BA_REQUIREMENTS]',
+            '[/BA_REQUIREMENTS]',
+        );
+        const latestArchitectDesign = extractLatestStructuredBlock(
+            upstreamOutputs,
+            '[ARCHITECT_DESIGN]',
+            '[/ARCHITECT_DESIGN]',
+        );
+        if (latestBaRequirements && ['scrum_master', 'architect', 'coder', 'reviewer', 'tester'].includes(role)) {
+            blocks.push({
+                name: 'BA_REQUIREMENTS_CONTEXT',
+                content: [
+                    '[BA_REQUIREMENTS_CONTEXT]',
+                    latestBaRequirements,
+                    '[/BA_REQUIREMENTS_CONTEXT]',
+                ].join('\n'),
+                priority: CONTEXT_PRIORITIES.BA_REQUIREMENTS_CONTEXT,
+            });
+        }
+        if (latestArchitectDesign && ['coder', 'reviewer', 'tester'].includes(role)) {
+            blocks.push({
+                name: 'ARCHITECT_DESIGN_CONTEXT',
+                content: [
+                    '[ARCHITECT_DESIGN_CONTEXT]',
+                    latestArchitectDesign,
+                    '[/ARCHITECT_DESIGN_CONTEXT]',
+                ].join('\n'),
+                priority: CONTEXT_PRIORITIES.ARCHITECT_DESIGN_CONTEXT,
             });
         }
 

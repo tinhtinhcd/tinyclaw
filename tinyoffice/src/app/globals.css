@@ -124,3 +124,43 @@ body {
 .animate-dash {
   animation: dash 1s linear infinite;
 }
+
+/* Agent activity animations */
+@keyframes agent-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes agent-thinking {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+@keyframes agent-working {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-1px) scale(1.01); }
+  75% { transform: translateY(1px) scale(0.99); }
+}
+
+@keyframes agent-handoff {
+  0%, 100% { transform: translateX(0) translateY(0); }
+  25% { transform: translateX(2px) translateY(-2px); }
+  50% { transform: translateX(-1px) translateY(1px); }
+  75% { transform: translateX(-2px) translateY(-1px); }
+}
+
+.agent-anim-idle {
+  animation: agent-idle 2.5s ease-in-out infinite;
+}
+
+.agent-anim-thinking {
+  animation: agent-thinking 1.2s ease-in-out infinite;
+}
+
+.agent-anim-working {
+  animation: agent-working 0.8s ease-in-out infinite;
+}
+
+.agent-anim-handoff {
+  animation: agent-handoff 1s ease-in-out infinite;
+}

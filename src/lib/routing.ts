@@ -144,6 +144,54 @@ export function isTeammate(
     return true;
 }
 
+/** Handoff target: agent (enqueue) or user (wait for input) */
+export type HandoffTarget =
+    | { type: 'agent'; agentId: string; message: string }
+    | { type: 'user'; message: string };
+
+/**
+ * Extract handoff targets from a response: [@agent: msg] or [@user: msg].
+ * Returns agent targets (valid teammates only) and user target (at most one).
+ * Used for conditional handoff: agent→agent, agent→user, or no-handoff.
+ */
+export function extractHandoffTargets(
+    response: string,
+    currentAgentId: string,
+    teamId: string,
+    teams: Record<string, TeamConfig>,
+    agents: Record<string, AgentConfig>,
+): HandoffTarget[] {
+    const results: HandoffTarget[] = [];
+    const seenAgents = new Set<string>();
+    let hasUser = false;
+
+    const tags = extractBracketTags(response, '@');
+    const sharedContext = stripBracketTags(response, '@');
+
+    for (const tag of tags) {
+        const directMessage = tag.message;
+        const fullMessage = sharedContext
+            ? `${sharedContext}\n\n------\n\nDirected to you:\n${directMessage}`
+            : directMessage;
+
+        const candidateIds = tag.id.toLowerCase().split(',').map(id => id.trim()).filter(Boolean);
+        for (const candidateId of candidateIds) {
+            if (candidateId === 'user') {
+                if (!hasUser) {
+                    results.push({ type: 'user', message: fullMessage });
+                    hasUser = true;
+                }
+                continue;
+            }
+            if (!seenAgents.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
+                results.push({ type: 'agent', agentId: candidateId, message: fullMessage });
+                seenAgents.add(candidateId);
+            }
+        }
+    }
+    return results;
+}
+
 /**
  * Extract valid @teammate mentions from a response text.
  * Uses bracket-depth parsing to handle nested brackets in message bodies.

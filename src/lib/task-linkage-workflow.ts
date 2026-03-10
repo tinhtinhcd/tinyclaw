@@ -91,6 +91,16 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
             'Produce compact requirement analysis with assumptions and acceptance criteria/user-story style outcomes.',
             'Avoid jumping straight to implementation details unless they clarify business impact.',
             'Do not behave like coder/reviewer/tester.',
+            'Handoff: if requirements are clear, mention next role (e.g. [@scrum_master: message]). If requirements are unclear or need confirmation, mention [@user: your question]. You may also stop without handoff when appropriate.',
+            'Use this structured contract when possible:',
+            '[BA_REQUIREMENTS]',
+            'Business Goal:',
+            'Clarifying Questions:',
+            'Assumptions:',
+            'User Stories:',
+            'Acceptance Criteria:',
+            'Risks / Unknowns:',
+            '[/BA_REQUIREMENTS]',
         ];
     }
     if (role === 'scrum_master' || role === 'pm') {
@@ -98,6 +108,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
             "Scrum Master guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             'Reuse existing Linear linkage when present.',
             'Avoid emitting commands when title/description/teamId are missing.',
+            'Handoff: when ready, mention next role (e.g. [@architect: message]). If blocked or need clarification, mention [@user: question]. You may stop without handoff when appropriate.',
             'Scrum Master valid: [task_linkage action="create_linear_issue" title="Fix parser bug" description="Handle malformed payload." teamId="abc123"]',
             'Scrum Master valid: [task_linkage action="attach_linear" linearIssueId="uuid" linearIssueIdentifier="ENG-123" linearIssueUrl="https://linear.app/..."]',
             'Scrum Master invalid: [task_linkage action="create_git_branch" repo="org/repo" baseBranch="main" workingBranch="feature/x"]',
@@ -106,6 +117,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     if (role === 'coder') {
         return [
             "Coder guidance: emit only git/PR commands ('create_git_branch', 'attach_git_branch', 'create_pull_request', 'attach_pull_request').",
+            'Handoff: when ready, mention next role (e.g. [@reviewer: message]). If blocked or need clarification, mention [@user: question]. You may stop without handoff when appropriate.',
             'Read linkage first and reuse existing repo/base/branch when available.',
             'Do not emit Linear creation commands by default.',
             'Coder valid: [task_linkage action="create_git_branch" repo="org/repo" baseBranch="main" workingBranch="feature/x"]',
@@ -120,11 +132,23 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
             'Mention key tradeoffs and technical risks briefly.',
             'Provide a practical design outline that enables the coder stage.',
             'Do not act as reviewer/tester; do not write full code unless explicitly requested.',
+            'Handoff: when ready, mention next role (e.g. [@coder: message]). If blocked or need clarification, mention [@user: question]. You may stop without handoff when appropriate.',
+            'Use this structured contract when possible:',
+            '[ARCHITECT_DESIGN]',
+            'System Goal:',
+            'Proposed Components / Modules:',
+            'API / Interface Notes:',
+            'Data / Storage Considerations:',
+            'Security / Reliability Considerations:',
+            'Implementation Plan:',
+            'Technical Risks / Tradeoffs:',
+            '[/ARCHITECT_DESIGN]',
         ];
     }
     if (role === 'reviewer') {
         return [
             'Reviewer guidance: read-only linkage usage.',
+            'Handoff: when ready, mention next role (e.g. [@tester: message]). If blocked or need clarification, mention [@user: question]. You may stop without handoff when appropriate.',
             'Use linked Linear/PR context in review output.',
             'If PR linkage already exists, do not ask user again for PR number/URL/repo unless linkage is actually missing.',
             'Reference linked PR, branch, and issue naturally in your review summary.',
@@ -135,6 +159,7 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
     if (role === 'tester') {
         return [
             'Tester guidance: read-only linkage usage.',
+            'Handoff: when done, you may mention [@user: summary] or stop without handoff. Mention next role only if workflow continues.',
             'Use linked Linear/PR context in testing output.',
             'If PR linkage already exists, do not ask user again for PR number/URL/repo unless linkage is actually missing.',
             'Use linked PR and changed-file context to suggest testing focus and risk areas.',

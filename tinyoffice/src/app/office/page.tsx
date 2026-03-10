@@ -12,30 +12,30 @@ import {
   type EventData,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import {
+  getLayoutForAgent,
+  getHomeForRole,
+  inferRoleFromAgentId,
+  ROLE_DESK_POSITIONS,
+} from "@/lib/office-layout";
+import { getLabelForState, type AgentActivityState } from "@/lib/office-state";
+import { eventToAgentState, type BackendEvent } from "@/lib/office-events";
 
-// Sprite keys cycle for agents beyond the 3 built-in chars
-const SPRITE_KEYS = ["char_1", "char_2", "char_3", "char_player"];
-
-// Desk positions in the office grid (normalized 0-1 coordinates)
-const DESK_POSITIONS = [
-  { x: 0.14, y: 0.21 },
-  { x: 0.25, y: 0.21 },
-  { x: 0.36, y: 0.21 },
-  { x: 0.47, y: 0.21 },
-  { x: 0.14, y: 0.36 },
-  { x: 0.25, y: 0.36 },
-  { x: 0.36, y: 0.36 },
-  { x: 0.47, y: 0.36 },
-  { x: 0.61, y: 0.63 },
-  { x: 0.72, y: 0.63 },
-  { x: 0.83, y: 0.63 },
-  { x: 0.61, y: 0.78 },
-  { x: 0.72, y: 0.78 },
-  { x: 0.83, y: 0.78 },
-];
-
-// Meeting point offset so two agents don't overlap
 const MEETING_OFFSET = 0.03;
+const ASSET_EXT = ".svg";
+
+function getAgentTooltip(agentId: string, agent: AgentConfig, state: AgentActivityState): string {
+  const role = (agent.role || inferRoleFromAgentId(agentId)).toLowerCase().replace(" ", "_");
+  const r = role === "pm" ? "scrum_master" : role;
+  return `@${agentId}: ${getLabelForState(r, state)}`;
+}
+
+function getAvatarForRole(role: string): string {
+  const r = role.toLowerCase().replace(" ", "_");
+  const known = ["ba", "scrum_master", "pm", "architect", "coder", "reviewer", "tester"];
+  const key = known.includes(r) ? (r === "pm" ? "scrum_master" : r) : "coder";
+  return `/assets/office/avatar-${key}${ASSET_EXT}`;
+}
 
 interface SpeechBubble {
   id: string;
@@ -107,52 +107,60 @@ function parseMessage(msg: string): MsgSegment[] {
   return segments;
 }
 
-// Lerp between two values
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
 export default function OfficePage() {
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
   const [bubbles, setBubbles] = useState<SpeechBubble[]>([]);
   const [statusEvents, setStatusEvents] = useState<StatusEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  const [agentStates, setAgentStates] = useState<Record<string, AgentActivityState>>({});
+  const [handoffTargets, setHandoffTargets] = useState<Record<string, { x: number; y: number }>>({});
   const seenRef = useRef(new Set<string>());
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
 
   const agentEntries = agents ? Object.entries(agents) : [];
   const teamEntries = teams ? Object.entries(teams) : [];
 
-  // Assign agents to desk positions and sprite images
-  const agentPositions = useMemo(
-    () =>
-      agentEntries.map(([id, agent], i) => ({
+  // Role-based layout: each agent gets a desk by role (offset if duplicate roles)
+  const agentPositions = useMemo(() => {
+    const roleCount = new Map<string, number>();
+    return agentEntries.map(([id, agent]) => {
+      const role = (agent.role || inferRoleFromAgentId(id)).toLowerCase().replace(" ", "_");
+      const r = role === "pm" ? "scrum_master" : role;
+      const layout = getLayoutForAgent(id, r);
+      const idx = roleCount.get(r) ?? 0;
+      roleCount.set(r, idx + 1);
+      const offset = idx * 0.04;
+      return {
         id,
         agent,
-        deskPos: DESK_POSITIONS[i % DESK_POSITIONS.length],
-        sprite: `/assets/office/${SPRITE_KEYS[i % SPRITE_KEYS.length]}.png`,
-      })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentEntries.map(([id]) => id).join(",")]
-  );
+        role: layout.role,
+        deskPos: { x: layout.desk.x + offset, y: layout.desk.y },
+        homePos: { x: layout.home.x + offset, y: layout.home.y },
+        avatar: getAvatarForRole(layout.role),
+      };
+    });
+  }, [agentEntries]);
 
-  // Build desk position lookup
   const deskPosMap = useMemo(
-    () => new Map(agentPositions.map((a) => [a.id, a.deskPos])),
+    () => new Map(agentPositions.map((a) => [a.id, a.homePos])),
     [agentPositions]
   );
 
-  // Compute where each agent currently is: at desk or walking to meet someone
+  // Compute render positions: home, handoff target, or meeting midpoint
   const agentRenderPositions = useMemo(() => {
     const positions = new Map<string, { x: number; y: number }>();
 
-    // Start everyone at their desk
     for (const ap of agentPositions) {
-      positions.set(ap.id, { x: ap.deskPos.x, y: ap.deskPos.y + 0.06 });
+      const handoffTarget = handoffTargets[ap.id];
+      if (handoffTarget && agentStates[ap.id] === "handoff") {
+        positions.set(ap.id, handoffTarget);
+      } else {
+        positions.set(ap.id, { x: ap.homePos.x, y: ap.homePos.y });
+      }
     }
 
-    // For each active bubble with targets, move agents toward each other
-    // Find the most recent bubble per agent
     const latestBubblePerAgent = new Map<string, SpeechBubble>();
     for (const b of bubbles) {
       const firstTarget = b.targetAgents[0];
@@ -164,27 +172,18 @@ export default function OfficePage() {
       }
     }
 
-    // Move agents toward each other (use first target for position)
     for (const [agentId, bubble] of latestBubblePerAgent) {
       const firstTarget = bubble.targetAgents[0]!;
       const fromDesk = deskPosMap.get(agentId)!;
       const toDesk = deskPosMap.get(firstTarget)!;
-
       const midX = (fromDesk.x + toDesk.x) / 2;
-      const midY = (fromDesk.y + toDesk.y) / 2 + 0.06;
-
+      const midY = (fromDesk.y + toDesk.y) / 2;
       const dx = toDesk.x - fromDesk.x;
       const dy = toDesk.y - fromDesk.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       const nx = dx / dist;
       const ny = dy / dist;
-
-      positions.set(agentId, {
-        x: midX - nx * MEETING_OFFSET,
-        y: midY - ny * MEETING_OFFSET,
-      });
-
-      // Also nudge all targeted agents toward midpoint if not already speaking
+      positions.set(agentId, { x: midX - nx * MEETING_OFFSET, y: midY - ny * MEETING_OFFSET });
       for (const targetId of bubble.targetAgents) {
         if (!latestBubblePerAgent.has(targetId) && deskPosMap.has(targetId)) {
           const tDesk = deskPosMap.get(targetId)!;
@@ -193,14 +192,14 @@ export default function OfficePage() {
           const tdist = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
           positions.set(targetId, {
             x: (fromDesk.x + tDesk.x) / 2 + (tdx / tdist) * MEETING_OFFSET,
-            y: (fromDesk.y + tDesk.y) / 2 + 0.06 + (tdy / tdist) * MEETING_OFFSET,
+            y: (fromDesk.y + tDesk.y) / 2 + (tdy / tdist) * MEETING_OFFSET,
           });
         }
       }
     }
 
     return positions;
-  }, [agentPositions, bubbles, deskPosMap]);
+  }, [agentPositions, bubbles, deskPosMap, handoffTargets, agentStates]);
 
   // Subscribe to SSE events
   useEffect(() => {
@@ -257,6 +256,43 @@ export default function OfficePage() {
           }
         }
 
+        // Agent activity state via event translation layer
+        const evt = event as unknown as BackendEvent;
+        const stateResults = eventToAgentState(evt);
+        for (const r of stateResults) {
+          if (r) {
+            setAgentStates((prev) => ({ ...prev, [r.agentId]: r.state }));
+            if (r.state === "handoff" && r.targetAgentId) {
+              const targetRole = (agents?.[r.targetAgentId] as AgentConfig)?.role || inferRoleFromAgentId(r.targetAgentId);
+              setHandoffTargets((prev) => ({ ...prev, [r.agentId]: getHomeForRole(targetRole) }));
+            }
+          }
+        }
+        if (event.type === "chain_step_start" && agentId) {
+          setAgentStates((prev) => ({ ...prev, [agentId]: "working" }));
+        }
+        if (event.type === "chain_step_done" && agentId) {
+          setAgentStates((prev) => ({ ...prev, [agentId]: "idle" }));
+          setHandoffTargets((prev) => {
+            const next = { ...prev };
+            delete next[agentId];
+            return next;
+          });
+        }
+        if (event.type === "chain_handoff") {
+          const fromAgent = e.fromAgent as string | undefined;
+          const toAgent = e.toAgent as string | undefined;
+          if (fromAgent) setAgentStates((prev) => ({ ...prev, [fromAgent]: "handoff" }));
+          if (toAgent) setAgentStates((prev) => ({ ...prev, [toAgent]: "thinking" }));
+          if (fromAgent && toAgent) {
+            const targetRole = (agentsRef.current?.[toAgent] as AgentConfig)?.role || inferRoleFromAgentId(toAgent);
+            setHandoffTargets((prev) => ({
+              ...prev,
+              [fromAgent]: getHomeForRole(targetRole),
+            }));
+          }
+        }
+
         // Status bar events (chain mechanics)
         const statusTypes = [
           "agent_routed",
@@ -286,6 +322,38 @@ export default function OfficePage() {
     );
     return unsub;
   }, []);
+
+  // Return handoff agents home after walk duration
+  useEffect(() => {
+    const handoffIds = Object.keys(handoffTargets);
+    if (handoffIds.length === 0) return;
+    const t = setTimeout(() => {
+      setHandoffTargets((prev) => {
+        const next = { ...prev };
+        for (const id of handoffIds) delete next[id];
+        return next;
+      });
+      setAgentStates((prev) => {
+        const next = { ...prev };
+        for (const id of handoffIds) next[id] = "idle";
+        return next;
+      });
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [handoffTargets]);
+
+  // Initialize agent states to idle when agents load
+  useEffect(() => {
+    if (agentEntries.length > 0) {
+      setAgentStates((prev) => {
+        const next = { ...prev };
+        for (const [id] of agentEntries) {
+          if (!(id in next)) next[id] = "idle";
+        }
+        return next;
+      });
+    }
+  }, [agentEntries.map(([id]) => id).join(",")]);
 
   // Auto-expire old bubbles after 15s
   useEffect(() => {
@@ -328,7 +396,7 @@ export default function OfficePage() {
           <div
             className="absolute inset-0"
             style={{
-              backgroundImage: "url(/assets/office/floor_tile.png)",
+              backgroundImage: "url(/assets/office/floor_tile.svg)",
               backgroundSize: "40px 40px",
               backgroundRepeat: "repeat",
               imageRendering: "pixelated",
@@ -347,14 +415,14 @@ export default function OfficePage() {
               }}
             >
               <img
-                src="/assets/office/desk.png"
+                src="/assets/office/desk.svg"
                 alt=""
                 className="w-[72px] h-[40px]"
                 style={{ imageRendering: "pixelated" }}
                 draggable={false}
               />
               <img
-                src="/assets/office/monitor.png"
+                src="/assets/office/monitor.svg"
                 alt=""
                 className="absolute w-[28px] h-auto"
                 style={{
@@ -366,7 +434,7 @@ export default function OfficePage() {
                 draggable={false}
               />
               <img
-                src="/assets/office/chair.png"
+                src="/assets/office/chair.svg"
                 alt=""
                 className="absolute w-[24px] h-auto"
                 style={{
@@ -390,7 +458,7 @@ export default function OfficePage() {
           ].map((pos, i) => (
             <img
               key={`plant-${i}`}
-              src="/assets/office/plant.png"
+              src="/assets/office/plant.svg"
               alt=""
               className="absolute w-[36px] h-auto"
               style={{
@@ -412,11 +480,21 @@ export default function OfficePage() {
             const activeBubble = bubbles
               .filter((b) => b.agentId === id)
               .slice(-1)[0];
+            const state = agentStates[id] ?? "idle";
+            const animClass =
+              state === "idle"
+                ? "agent-anim-idle"
+                : state === "thinking"
+                  ? "agent-anim-thinking"
+                  : state === "working"
+                    ? "agent-anim-working"
+                    : "agent-anim-handoff";
+            const tooltip = getAgentTooltip(id, agent, state);
 
             return (
               <div
                 key={`agent-${id}`}
-                className="absolute"
+                className="absolute group"
                 style={{
                   left: `${pos.x * 100}%`,
                   top: `${pos.y * 100}%`,
@@ -424,20 +502,26 @@ export default function OfficePage() {
                   zIndex: Math.floor(pos.y * 100) + 10,
                   transition: "left 0.8s ease-in-out, top 0.8s ease-in-out",
                 }}
+                title={tooltip}
               >
                 {/* Speech bubble */}
                 {activeBubble && (
                   <SpeechBubbleEl bubble={activeBubble} />
                 )}
 
-                {/* Character sprite */}
+                {/* Character sprite with state animation */}
                 <img
-                  src={sprite}
+                  src={avatar}
                   alt={agent.name}
-                  className="w-[36px] h-auto mx-auto"
+                  className={`w-[36px] h-auto mx-auto ${animClass}`}
                   style={{ imageRendering: "pixelated" }}
                   draggable={false}
                 />
+
+                {/* Hover tooltip */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-card border border-border text-[10px] rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                  {tooltip}
+                </div>
 
                 {/* Agent name label */}
                 <div className="text-[9px] text-center font-bold text-foreground mt-0.5 bg-background/80 px-1.5 py-0.5 whitespace-nowrap">
@@ -464,7 +548,7 @@ export default function OfficePage() {
                       <div className="absolute -bottom-1 left-4 w-2 h-2 bg-primary rotate-45" />
                     </div>
                     <img
-                      src="/assets/office/char_player.png"
+                      src="/assets/office/char_player.svg"
                       alt="User"
                       className="w-[36px] h-auto mx-auto"
                       style={{ imageRendering: "pixelated" }}

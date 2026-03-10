@@ -1,8 +1,8 @@
 import { AgentConfig, Conversation, MessageData, Settings, TeamConfig } from '../lib/types';
 import { emitEvent } from '../lib/logging';
 import { enqueueInternalMessage, incrementPending } from '../lib/conversation';
-import { extractTeammateMentions } from '../lib/routing';
-import { setDevPipelineApprovalState } from '../lib/task-linkage';
+import { extractHandoffTargets } from '../lib/routing';
+import { setDevPipelineApprovalState, setWorkflowWaitingForUserInput } from '../lib/task-linkage';
 import { ResolvedTeamWorkflow, resolveTeamWorkflow } from './workflow-config';
 
 function normalizeApprovalText(text: string): string {
@@ -32,6 +32,20 @@ export function isExplicitApprovalMessage(text: string): boolean {
     return approvals.has(normalized);
 }
 
+export function isExplicitWorkflowStartMessage(text: string): boolean {
+    const normalized = normalizeApprovalText(text);
+    if (!normalized) return false;
+    const starters = [
+        'create task',
+        'start task',
+        'start working',
+        'implement',
+        'build feature',
+        'analyze requirement',
+    ];
+    return starters.some(s => normalized.includes(s));
+}
+
 export function getResolvedTeamWorkflow(
     teamId: string,
     team: TeamConfig,
@@ -42,6 +56,22 @@ export function getResolvedTeamWorkflow(
     return resolveTeamWorkflow({
         teamId, team, agents, settings, log,
     });
+}
+
+/** Allowed handoff targets for current agent in workflow: next role(s) + user */
+function getAllowedHandoffTargets(
+    workflowState: NonNullable<Conversation['workflowState']>,
+    agentId: string,
+    agents: Record<string, AgentConfig>,
+): { allowedAgentIds: Set<string>; canHandoffToUser: boolean } {
+    const sequence = workflowState.sequence;
+    const idx = sequence.indexOf(agentId);
+    const allowedAgentIds = new Set<string>();
+    if (idx >= 0 && idx < sequence.length - 1) {
+        const nextAgentId = sequence[idx + 1];
+        if (agents[nextAgentId]) allowedAgentIds.add(nextAgentId);
+    }
+    return { allowedAgentIds, canHandoffToUser: true };
 }
 
 export function handleConversationHandoffs(params: {
@@ -58,15 +88,11 @@ export function handleConversationHandoffs(params: {
         conv, agentId, response, invocationFailed, teams, agents, messageData, log,
     } = params;
     const workflowState = conv.workflowState;
+
     if (workflowState?.type === 'dev_pipeline') {
         if (invocationFailed) {
-            log('WARN', `Dev pipeline halted for conversation ${conv.id}: @${agentId} failed, skipping next stage handoff`);
-        }
-        const maybeMentions = extractTeammateMentions(
-            response, agentId, conv.teamContext.teamId, teams, agents,
-        );
-        if (maybeMentions.length > 0) {
-            log('INFO', `Conversation ${conv.id} is in dev_pipeline mode; ignoring ${maybeMentions.length} explicit teammate mention(s)`);
+            log('WARN', `Dev pipeline halted for conversation ${conv.id}: @${agentId} failed, skipping handoff`);
+            return;
         }
 
         const currentStage = workflowState.currentIndex;
@@ -76,7 +102,8 @@ export function handleConversationHandoffs(params: {
         const nextRole = stageRoles[currentStage + 1];
         const requiresApprovalIndices = new Set(workflowState.requiresApprovalIndices || []);
         const requiresApproval = requiresApprovalIndices.has(currentStage);
-        if (!invocationFailed && requiresApproval && currentStage < lastStage) {
+
+        if (requiresApproval && currentStage < lastStage) {
             if (conv.taskId) {
                 setDevPipelineApprovalState(conv.taskId, {
                     awaitingApproval: true,
@@ -97,63 +124,93 @@ export function handleConversationHandoffs(params: {
             });
             return;
         }
-        if (!invocationFailed && currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
-            const nextStage = currentStage + 1;
-            const nextAgentId = workflowState.sequence[nextStage];
-            workflowState.currentIndex = nextStage;
-            workflowState.waitingForApproval = false;
-            workflowState.completedStages = [...(workflowState.completedStages || []), currentRole];
 
-            incrementPending(conv, 1);
-            conv.outgoingMentions.set(agentId, 1);
-            conv.pendingAgents.add(nextAgentId);
+        const targets = extractHandoffTargets(
+            response, agentId, conv.teamContext.teamId, teams, agents,
+        );
+        const userTarget = targets.find(t => t.type === 'user');
+        const agentTargets = targets.filter((t): t is { type: 'agent'; agentId: string; message: string } => t.type === 'agent');
 
-            log('INFO', `Dev pipeline handoff @${agentId} → @${nextAgentId}`);
-            emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: nextAgentId });
+        if (userTarget) {
+            if (conv.taskId) setWorkflowWaitingForUserInput(conv.taskId, true);
+            log('INFO', `Dev pipeline handoff @${agentId} → @user (waiting for user input)`);
+            emitEvent('handoff_to_user', { teamId: conv.teamContext.teamId, fromAgent: agentId, conversationId: conv.id });
+            return;
+        }
 
-            const internalMsg = [
-                `[Workflow handoff: dev_pipeline ${nextStage + 1}/${workflowState.sequence.length}]`,
-                '',
-                'Original user request:',
-                conv.originalMessage,
-                '',
-                `Previous output from @${agentId}:`,
-                response.trim(),
-            ].join('\n');
+        const { allowedAgentIds } = getAllowedHandoffTargets(workflowState, agentId, agents);
+        const validAgentTargets = agentTargets.filter(t => allowedAgentIds.has(t.agentId));
+        const invalidMentions = agentTargets.filter(t => !allowedAgentIds.has(t.agentId));
+        if (invalidMentions.length > 0) {
+            log('WARN', `Dev pipeline rejected invalid transition(s) @${agentId} → [${invalidMentions.map(m => m.agentId).join(', ')}]; allowed next: [${[...allowedAgentIds].join(', ')}]`);
+        }
 
-            enqueueInternalMessage(conv.id, agentId, nextAgentId, internalMsg, {
-                channel: messageData.channel,
-                sender: messageData.sender,
-                senderId: messageData.senderId,
-                messageId: messageData.messageId,
-            });
-        } else if (!invocationFailed && currentStage < lastStage) {
-            log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — stopping dev_pipeline handoff`);
+        if (validAgentTargets.length > 0 && currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
+            const t = validAgentTargets[0];
+            const nextAgentId = t.agentId;
+            const nextStage = workflowState.sequence.indexOf(nextAgentId);
+            if (nextStage >= 0) {
+                workflowState.currentIndex = nextStage;
+                workflowState.waitingForApproval = false;
+                workflowState.completedStages = [...(workflowState.completedStages || []), currentRole];
+
+                incrementPending(conv, 1);
+                conv.outgoingMentions.set(agentId, 1);
+                conv.pendingAgents.add(nextAgentId);
+
+                log('INFO', `Dev pipeline handoff @${agentId} → @${nextAgentId}`);
+                emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: nextAgentId });
+                emitEvent('agent_state', { agent: agentId, state: 'handoff' });
+                emitEvent('agent_state', { agent: nextAgentId, state: 'thinking' });
+
+                const internalMsg = `[Message from teammate @${agentId}]:\n${t.message}`;
+                enqueueInternalMessage(conv.id, agentId, nextAgentId, internalMsg, {
+                    channel: messageData.channel,
+                    sender: messageData.sender,
+                    senderId: messageData.senderId,
+                    messageId: messageData.messageId,
+                });
+            }
+        } else if (validAgentTargets.length === 0 && agentTargets.length === 0 && !userTarget) {
+            log('INFO', `Dev pipeline no handoff from @${agentId} — workflow paused`);
+        } else if (validAgentTargets.length > 0 && conv.totalMessages >= conv.maxMessages) {
+            log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing handoff`);
         }
         return;
     }
 
-    const teammateMentions = extractTeammateMentions(
+    const targets = extractHandoffTargets(
         response, agentId, conv.teamContext.teamId, teams, agents,
     );
+    const userTarget = targets.find(t => t.type === 'user');
+    const agentTargets = targets.filter((t): t is { type: 'agent'; agentId: string; message: string } => t.type === 'agent');
 
-    if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
-        incrementPending(conv, teammateMentions.length);
-        conv.outgoingMentions.set(agentId, teammateMentions.length);
-        for (const mention of teammateMentions) {
-            conv.pendingAgents.add(mention.teammateId);
-            log('INFO', `@${agentId} → @${mention.teammateId}`);
-            emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+    if (userTarget) {
+        if (conv.taskId) setWorkflowWaitingForUserInput(conv.taskId, true);
+        log('INFO', `Handoff @${agentId} → @user (waiting for user input)`);
+        emitEvent('handoff_to_user', { teamId: conv.teamContext.teamId, fromAgent: agentId, conversationId: conv.id });
+        return;
+    }
 
-            const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
-            enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+    if (agentTargets.length > 0 && conv.totalMessages < conv.maxMessages) {
+        incrementPending(conv, agentTargets.length);
+        conv.outgoingMentions.set(agentId, agentTargets.length);
+        for (const t of agentTargets) {
+            conv.pendingAgents.add(t.agentId);
+            log('INFO', `@${agentId} → @${t.agentId}`);
+            emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: t.agentId });
+            emitEvent('agent_state', { agent: agentId, state: 'handoff' });
+            emitEvent('agent_state', { agent: t.agentId, state: 'thinking' });
+
+            const internalMsg = `[Message from teammate @${agentId}]:\n${t.message}`;
+            enqueueInternalMessage(conv.id, agentId, t.agentId, internalMsg, {
                 channel: messageData.channel,
                 sender: messageData.sender,
                 senderId: messageData.senderId,
                 messageId: messageData.messageId,
             });
         }
-    } else if (teammateMentions.length > 0) {
+    } else if (agentTargets.length > 0) {
         log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
     }
 }

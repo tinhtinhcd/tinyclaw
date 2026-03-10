@@ -88,8 +88,8 @@ test('PM stays gatekeeper until explicit approval', async () => {
     const channelId = 'C-approve-1';
     const threadTs = 'T-approve-1';
 
-    // 1) Trivial message stays at PM only.
-    await processMessageForTest(buildSlackDbMessage(9101, 'msg_approval_hello', 'hello @PM', channelId, threadTs), [], {
+    // 1) Explicit workflow start stays at PM only until approval.
+    await processMessageForTest(buildSlackDbMessage(9101, 'msg_approval_hello', 'start task hello @PM', channelId, threadTs), [], {
         invokeAgentFn,
         runIncomingHooksFn: passthroughIncoming,
         runOutgoingHooksFn: passthroughOutgoing,

@@ -251,6 +251,15 @@ export function markDevPipelineApproved(taskId: string): TaskLinkage {
     return task.linkage!;
 }
 
+export function setWorkflowWaitingForUserInput(taskId: string, waiting: boolean): TaskLinkage {
+    const task = updateTask(taskId, t => {
+        const linkage = ensureTaskLinkage(t);
+        linkage.workflowWaitingForUserInput = waiting;
+    });
+    log('INFO', `[TASK_LINKAGE] Workflow waiting for user input: ${taskId} waiting=${waiting}`);
+    return task.linkage!;
+}
+
 export function setDevPipelineApprovalState(taskId: string, state: {
     awaitingApproval: boolean;
     awaitingRole?: string;

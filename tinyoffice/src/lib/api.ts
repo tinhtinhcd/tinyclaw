@@ -197,7 +197,11 @@ export function subscribeToEvents(
   const eventTypes = [
     "message_received", "agent_routed", "chain_step_start", "chain_step_done",
     "chain_handoff", "team_chain_start", "team_chain_end", "response_ready",
-    "processor_start", "message_enqueued",
+    "processor_start", "message_enqueued", "agent_state",
+    "worker.started", "worker.failed", "worker.timeout",
+    "review_fetch.started", "review_fetch.succeeded", "review_fetch.failed",
+    "tester_focus.generated", "linkage.pr_attached", "linkage.branch_attached",
+    "runtime.event",
   ];
   for (const type of eventTypes) {
     es.addEventListener(type, handler);

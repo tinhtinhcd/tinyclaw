@@ -31,6 +31,7 @@ import {
     getTaskLinkageBySlackThread,
     markDevPipelineApproved,
     setDevPipelineApprovalState,
+    setWorkflowWaitingForUserInput,
 } from '../lib/task-linkage';
 import {
     applyTaskLinkageCommands,
@@ -41,7 +42,12 @@ import { errorTinyEvent, emitTinyEvent } from '../lib/observability';
 import { enrichPromptContext } from './prompt-context';
 import { runWorkerOrInvokeAgent } from './worker-delegation';
 import { enqueueDirectResponse } from './response-runtime';
-import { getResolvedTeamWorkflow, handleConversationHandoffs, isExplicitApprovalMessage } from './handoff-runtime';
+import {
+    getResolvedTeamWorkflow,
+    handleConversationHandoffs,
+    isExplicitApprovalMessage,
+    isExplicitWorkflowStartMessage,
+} from './handoff-runtime';
 
 export interface ProcessMessageOverrides {
     invokeAgentFn?: typeof invokeAgent;
@@ -176,6 +182,12 @@ export async function processMessage(
         const shouldReset = fs.existsSync(agentResetFlag);
         if (shouldReset) fs.unlinkSync(agentResetFlag);
 
+        const workflowRequested = !isInternal && (
+            isExplicitWorkflowStartMessage(rawMessage)
+            || isExplicitWorkflowStartMessage(message)
+        );
+        let workflowMode = workflowRequested;
+
         let linkedTaskId: string | undefined;
         if (isInternal && messageData.conversationId) {
             const conv = conversations.get(messageData.conversationId);
@@ -190,6 +202,9 @@ export async function processMessage(
                     const existingLinkage = getTaskLinkageBySlackThread(slackChannelId, slackThreadTs);
                     if (existingLinkage) {
                         linkedTaskId = existingLinkage.taskId;
+                        if (existingLinkage.workflowWaitingForUserInput) {
+                            setWorkflowWaitingForUserInput(linkedTaskId, false);
+                        }
                         emitTinyEvent({
                             type: 'linkage_resolved_slack_thread',
                             taskId: linkedTaskId,
@@ -221,6 +236,7 @@ export async function processMessage(
             const linkage = getTaskLinkage(linkedTaskId);
             const awaitingApproval = !!(linkage?.devPipelineAwaitingApproval || linkage?.devPipelineAwaitingPmApproval);
             if (awaitingApproval && firstStageAgentId) {
+                workflowMode = true;
                 const awaitingRole = linkage?.devPipelineAwaitingRole;
                 const awaitingStage = awaitingRole
                     ? resolvedWorkflow?.stages.find(s => s.role === awaitingRole)
@@ -281,6 +297,9 @@ export async function processMessage(
             teamContext,
             log,
             fetchReviewerPrContextFn: overrides.fetchReviewerPrContextFn,
+            upstreamOutputs: (isInternal && messageData.conversationId && conversations.has(messageData.conversationId))
+                ? conversations.get(messageData.conversationId)!.responses.map(r => r.response)
+                : [],
         });
         const role = roleResult.role;
         message = roleResult.message;
@@ -306,6 +325,7 @@ export async function processMessage(
             messageId: rootMessageId,
             channel,
         });
+        emitEvent('agent_state', { agent: agentId, state: 'working' });
 
         let response: string;
         let invocationFailed = false;
@@ -360,6 +380,7 @@ export async function processMessage(
             messageId: rootMessageId,
             channel,
         });
+        emitEvent('agent_state', { agent: agentId, state: 'idle' });
 
         const chatRoomMsgs = extractChatRoomMessages(response, agentId, teams);
         for (const crMsg of chatRoomMsgs) {
@@ -400,8 +421,12 @@ export async function processMessage(
             if (candidateSequence && sequenceStartIndex < 0) {
                 log('WARN', `Team ${teamContext.team.name} has dev_pipeline configured but initial agent '${agentId}' is not in workflow stages; using mention-based flow`);
             }
-            const devPipelineSequence = sequenceStartIndex >= 0 ? candidateSequence : null;
+            const enableDevPipeline = workflowMode;
+            const devPipelineSequence = (enableDevPipeline && sequenceStartIndex >= 0) ? candidateSequence : null;
             const startIndex = sequenceStartIndex >= 0 ? sequenceStartIndex : 0;
+            if (!enableDevPipeline && candidateSequence && sequenceStartIndex >= 0) {
+                log('INFO', `Team ${teamContext.team.name} role mention routed without workflow start intent; running in chat mode for @${agentId}`);
+            }
             conv = {
                 id: convId,
                 channel,
