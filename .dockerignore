@@ -1,0 +1,15 @@
+.git
+.cursor
+.agents
+.tinyclaw/logs
+.tinyclaw/chats
+.tinyclaw/files
+node_modules
+dist
+tinyoffice/node_modules
+tinyoffice/.next
+agent-transcripts
+terminals
+mcps
+*.log
+.env

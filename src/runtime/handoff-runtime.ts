@@ -1,8 +1,9 @@
-import { AgentConfig, Conversation, MessageData, TeamConfig } from '../lib/types';
+import { AgentConfig, Conversation, MessageData, Settings, TeamConfig } from '../lib/types';
 import { emitEvent } from '../lib/logging';
 import { enqueueInternalMessage, incrementPending } from '../lib/conversation';
 import { extractTeammateMentions } from '../lib/routing';
-import { setDevPipelineAwaitingPmApproval } from '../lib/task-linkage';
+import { setDevPipelineApprovalState } from '../lib/task-linkage';
+import { ResolvedTeamWorkflow, resolveTeamWorkflow } from './workflow-config';
 
 function normalizeApprovalText(text: string): string {
     return text
@@ -31,33 +32,16 @@ export function isExplicitApprovalMessage(text: string): boolean {
     return approvals.has(normalized);
 }
 
-export function getDevPipelineSequence(
+export function getResolvedTeamWorkflow(
+    teamId: string,
     team: TeamConfig,
     agents: Record<string, AgentConfig>,
+    settings: Settings,
     log?: (level: string, msg: string) => void,
-): string[] | null {
-    const wf = team.workflow;
-    if (!wf || wf.type !== 'dev_pipeline') return null;
-
-    const sequence = [wf.pm, wf.coder, wf.reviewer, wf.tester].map(id => id.toLowerCase());
-    const unique = new Set(sequence);
-    if (unique.size !== sequence.length) {
-        log?.('WARN', `Team ${team.name} has duplicate workflow agents; disabling dev_pipeline for this conversation`);
-        return null;
-    }
-
-    for (const stageAgent of sequence) {
-        if (!team.agents.includes(stageAgent)) {
-            log?.('WARN', `Team ${team.name} workflow agent '${stageAgent}' is not in team.agents; disabling dev_pipeline for this conversation`);
-            return null;
-        }
-        if (!agents[stageAgent]) {
-            log?.('WARN', `Team ${team.name} workflow agent '${stageAgent}' not found in agent config; disabling dev_pipeline for this conversation`);
-            return null;
-        }
-    }
-
-    return sequence;
+): ResolvedTeamWorkflow | null {
+    return resolveTeamWorkflow({
+        teamId, team, agents, settings, log,
+    });
 }
 
 export function handleConversationHandoffs(params: {
@@ -87,15 +71,28 @@ export function handleConversationHandoffs(params: {
 
         const currentStage = workflowState.currentIndex;
         const lastStage = workflowState.sequence.length - 1;
-        if (!invocationFailed && currentStage === 0) {
+        const stageRoles = workflowState.stageRoles || [];
+        const currentRole = stageRoles[currentStage] || agentId;
+        const nextRole = stageRoles[currentStage + 1];
+        const requiresApprovalIndices = new Set(workflowState.requiresApprovalIndices || []);
+        const requiresApproval = requiresApprovalIndices.has(currentStage);
+        if (!invocationFailed && requiresApproval && currentStage < lastStage) {
             if (conv.taskId) {
-                setDevPipelineAwaitingPmApproval(conv.taskId, true);
+                setDevPipelineApprovalState(conv.taskId, {
+                    awaitingApproval: true,
+                    awaitingRole: currentRole,
+                    nextRole,
+                    workflowId: workflowState.workflowId,
+                });
             }
-            log('INFO', `Dev pipeline waiting user approval after PM for conversation ${conv.id}`);
+            workflowState.waitingForApproval = true;
+            workflowState.completedStages = [...(workflowState.completedStages || []), currentRole];
+            log('INFO', `Dev pipeline waiting user approval after role '${currentRole}' for conversation ${conv.id}`);
             emitEvent('dev_pipeline_waiting_approval', {
                 teamId: conv.teamContext.teamId,
                 conversationId: conv.id,
                 taskId: conv.taskId || null,
+                role: currentRole,
                 currentAgent: agentId,
             });
             return;
@@ -104,6 +101,8 @@ export function handleConversationHandoffs(params: {
             const nextStage = currentStage + 1;
             const nextAgentId = workflowState.sequence[nextStage];
             workflowState.currentIndex = nextStage;
+            workflowState.waitingForApproval = false;
+            workflowState.completedStages = [...(workflowState.completedStages || []), currentRole];
 
             incrementPending(conv, 1);
             conv.outgoingMentions.set(agentId, 1);

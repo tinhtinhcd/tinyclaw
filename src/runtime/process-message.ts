@@ -30,6 +30,7 @@ import {
     getTaskLinkage,
     getTaskLinkageBySlackThread,
     markDevPipelineApproved,
+    setDevPipelineApprovalState,
 } from '../lib/task-linkage';
 import {
     applyTaskLinkageCommands,
@@ -40,7 +41,7 @@ import { errorTinyEvent, emitTinyEvent } from '../lib/observability';
 import { enrichPromptContext } from './prompt-context';
 import { runWorkerOrInvokeAgent } from './worker-delegation';
 import { enqueueDirectResponse } from './response-runtime';
-import { getDevPipelineSequence, handleConversationHandoffs, isExplicitApprovalMessage } from './handoff-runtime';
+import { getResolvedTeamWorkflow, handleConversationHandoffs, isExplicitApprovalMessage } from './handoff-runtime';
 
 export interface ProcessMessageOverrides {
     invokeAgentFn?: typeof invokeAgent;
@@ -52,6 +53,28 @@ export interface ProcessMessageOverrides {
         role: WorkflowRole,
         log: (level: string, msg: string) => void,
     ) => Promise<string>;
+}
+
+function deriveAgentFromSlackInboundBot(params: {
+    settings: ReturnType<typeof getSettings>;
+    agents: Record<string, AgentConfig>;
+    inboundBotId?: string;
+    log: (level: string, msg: string) => void;
+}): string | undefined {
+    const { settings, agents, inboundBotId, log } = params;
+    if (!inboundBotId) return undefined;
+    const roleBotMap = settings.channels?.slack?.role_bot_map || {};
+    const roleEntry = Object.entries(roleBotMap).find(([, botId]) => botId === inboundBotId);
+    if (!roleEntry) return undefined;
+    const role = roleEntry[0].toLowerCase();
+    const matchingAgentIds = Object.entries(agents)
+        .filter(([, a]) => (a.role || '').toLowerCase() === role)
+        .map(([id]) => id);
+    if (matchingAgentIds.length === 0) return undefined;
+    if (matchingAgentIds.length > 1) {
+        log('WARN', `Multiple agents match role '${role}' for inbound bot '${inboundBotId}', using '${matchingAgentIds[0]}'`);
+    }
+    return matchingAgentIds[0];
 }
 
 export async function processMessage(
@@ -100,9 +123,25 @@ export async function processMessage(
             message = rawMessage;
         } else {
             const routing = parseAgentRouting(rawMessage, agents, teams);
-            agentId = routing.agentId;
+            const inboundBotId = messageData.channel === 'slack' && !isInternal
+                ? (typeof messageData.sourceMetadata?.inboundBotId === 'string'
+                    ? messageData.sourceMetadata.inboundBotId
+                    : undefined)
+                : undefined;
+            const botMappedAgentId = (routing.agentId === 'default')
+                ? deriveAgentFromSlackInboundBot({
+                    settings,
+                    agents,
+                    inboundBotId,
+                    log,
+                })
+                : undefined;
+            agentId = botMappedAgentId || routing.agentId;
             message = routing.message;
             isTeamRouted = !!routing.isTeam;
+            if (botMappedAgentId) {
+                log('INFO', `Slack inbound bot '${inboundBotId}' mapped to agent '${botMappedAgentId}'`);
+            }
         }
         if (!agents[agentId]) {
             agentId = 'default';
@@ -177,16 +216,28 @@ export async function processMessage(
         }
 
         if (!isInternal && teamContext?.team.workflow?.type === 'dev_pipeline' && linkedTaskId) {
-            const sequence = getDevPipelineSequence(teamContext.team, agents, log);
-            const pmAgentId = sequence?.[0];
-            const coderAgentId = sequence?.[1];
+            const resolvedWorkflow = getResolvedTeamWorkflow(teamContext.teamId, teamContext.team, agents, settings, log);
+            const firstStageAgentId = resolvedWorkflow?.stages[0]?.agentId;
             const linkage = getTaskLinkage(linkedTaskId);
-            const awaitingPmApproval = !!linkage?.devPipelineAwaitingPmApproval;
-            if (awaitingPmApproval && pmAgentId) {
-                if (isExplicitApprovalMessage(message) && coderAgentId && agents[coderAgentId]) {
+            const awaitingApproval = !!(linkage?.devPipelineAwaitingApproval || linkage?.devPipelineAwaitingPmApproval);
+            if (awaitingApproval && firstStageAgentId) {
+                const awaitingRole = linkage?.devPipelineAwaitingRole;
+                const awaitingStage = awaitingRole
+                    ? resolvedWorkflow?.stages.find(s => s.role === awaitingRole)
+                    : undefined;
+                const gatekeeperAgentId = awaitingStage?.agentId || firstStageAgentId;
+                const approvedNextRole = linkage?.devPipelineNextRole || resolvedWorkflow?.stages[1]?.role;
+                const approvedNextStage = resolvedWorkflow?.stages.find(s => s.role === approvedNextRole)
+                    || resolvedWorkflow?.stages[1];
+                const nextAgentId = approvedNextStage?.agentId;
+                if (isExplicitApprovalMessage(message) && nextAgentId && agents[nextAgentId]) {
                     markDevPipelineApproved(linkedTaskId);
+                    setDevPipelineApprovalState(linkedTaskId, {
+                        awaitingApproval: false,
+                        workflowId: linkage?.devPipelineWorkflowId || resolvedWorkflow?.workflowId,
+                    });
                     const previousAgent = agentId;
-                    agentId = coderAgentId;
+                    agentId = nextAgentId;
                     agent = agents[agentId];
                     log('INFO', `Dev pipeline approval detected for task ${linkedTaskId}; rerouting @${previousAgent} → @${agentId}`);
                     emitEvent('dev_pipeline_approval_granted', {
@@ -197,9 +248,9 @@ export async function processMessage(
                         messageId,
                     });
                 } else {
-                    if (agentId !== pmAgentId && agents[pmAgentId]) {
+                    if (agentId !== gatekeeperAgentId && agents[gatekeeperAgentId]) {
                         const previousAgent = agentId;
-                        agentId = pmAgentId;
+                        agentId = gatekeeperAgentId;
                         agent = agents[agentId];
                         log('INFO', `Dev pipeline still awaiting approval for task ${linkedTaskId}; forcing route @${previousAgent} → @${agentId}`);
                     }
@@ -339,7 +390,12 @@ export async function processMessage(
             conv = conversations.get(messageData.conversationId)!;
         } else {
             const convId = `${messageId}_${Date.now()}`;
-            const candidateSequence = getDevPipelineSequence(teamContext.team, agents, log);
+            const candidateWorkflow = getResolvedTeamWorkflow(teamContext.teamId, teamContext.team, agents, settings, log);
+            const candidateSequence = candidateWorkflow ? candidateWorkflow.stages.map(s => s.agentId) : null;
+            const candidateRoles = candidateWorkflow ? candidateWorkflow.stages.map(s => s.role) : null;
+            const requiresApprovalIndices = candidateWorkflow
+                ? candidateWorkflow.stages.map((s, idx) => (s.requiresApprovalToAdvance ? idx : -1)).filter(idx => idx >= 0)
+                : [];
             const sequenceStartIndex = candidateSequence ? candidateSequence.indexOf(agentId) : -1;
             if (candidateSequence && sequenceStartIndex < 0) {
                 log('WARN', `Team ${teamContext.team.name} has dev_pipeline configured but initial agent '${agentId}' is not in workflow stages; using mention-based flow`);
@@ -365,6 +421,11 @@ export async function processMessage(
                     type: 'dev_pipeline',
                     sequence: devPipelineSequence,
                     currentIndex: startIndex,
+                    stageRoles: candidateRoles || undefined,
+                    requiresApprovalIndices,
+                    waitingForApproval: false,
+                    completedStages: [],
+                    workflowId: candidateWorkflow?.workflowId,
                 } : undefined,
                 taskId: linkedTaskId,
             };

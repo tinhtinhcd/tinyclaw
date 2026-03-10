@@ -23,7 +23,7 @@ function truncateWithMarker(value: string, maxChars: number): string {
     return `${value.slice(0, maxChars - marker.length)}${marker}`;
 }
 
-export type WorkflowRole = 'pm' | 'coder' | 'reviewer' | 'tester' | 'unknown';
+export type WorkflowRole = string;
 type CommandAction =
     | 'attach_linear'
     | 'create_linear_issue'
@@ -32,12 +32,12 @@ type CommandAction =
     | 'attach_pull_request'
     | 'create_pull_request';
 
-const ROLE_COMMAND_CONTRACT: Record<WorkflowRole, CommandAction[]> = {
+const ROLE_COMMAND_CONTRACT: Record<string, CommandAction[]> = {
+    scrum_master: ['attach_linear', 'create_linear_issue'],
     pm: ['attach_linear', 'create_linear_issue'],
     coder: ['attach_git_branch', 'create_git_branch', 'attach_pull_request', 'create_pull_request'],
     reviewer: [],
     tester: [],
-    unknown: [],
 };
 
 function parseAttributes(raw: string): Record<string, string> {
@@ -63,10 +63,11 @@ function parseRequiredPositiveInt(value?: string): number | null {
 }
 
 function statusForRole(role: WorkflowRole): TaskStatus | null {
-    if (role === 'pm') return 'in_progress';
+    if (role === 'scrum_master' || role === 'pm') return 'in_progress';
     if (role === 'coder') return 'in_progress';
     if (role === 'reviewer') return 'review';
     if (role === 'tester') return 'review';
+    if (role === 'architect' || role === 'ba') return 'in_progress';
     return null;
 }
 
@@ -79,18 +80,27 @@ function roleContractHint(role: WorkflowRole): string {
 }
 
 export function getRoleCommandContract(role: WorkflowRole): string[] {
-    return [...ROLE_COMMAND_CONTRACT[role]];
+    return [...(ROLE_COMMAND_CONTRACT[role] || [])];
 }
 
 function buildRolePromptGuidance(role: WorkflowRole): string[] {
-    if (role === 'pm') {
+    if (role === 'ba') {
         return [
-            "PM guidance: emit only 'create_linear_issue' or 'attach_linear'.",
+            'BA guidance: clarify business goals and missing requirements before implementation.',
+            'Identify ambiguity and ask concise clarifying questions when requirements are underspecified.',
+            'Produce compact requirement analysis with assumptions and acceptance criteria/user-story style outcomes.',
+            'Avoid jumping straight to implementation details unless they clarify business impact.',
+            'Do not behave like coder/reviewer/tester.',
+        ];
+    }
+    if (role === 'scrum_master' || role === 'pm') {
+        return [
+            "Scrum Master guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             'Reuse existing Linear linkage when present.',
             'Avoid emitting commands when title/description/teamId are missing.',
-            'PM valid: [task_linkage action="create_linear_issue" title="Fix parser bug" description="Handle malformed payload." teamId="abc123"]',
-            'PM valid: [task_linkage action="attach_linear" linearIssueId="uuid" linearIssueIdentifier="ENG-123" linearIssueUrl="https://linear.app/..."]',
-            'PM invalid: [task_linkage action="create_git_branch" repo="org/repo" baseBranch="main" workingBranch="feature/x"]',
+            'Scrum Master valid: [task_linkage action="create_linear_issue" title="Fix parser bug" description="Handle malformed payload." teamId="abc123"]',
+            'Scrum Master valid: [task_linkage action="attach_linear" linearIssueId="uuid" linearIssueIdentifier="ENG-123" linearIssueUrl="https://linear.app/..."]',
+            'Scrum Master invalid: [task_linkage action="create_git_branch" repo="org/repo" baseBranch="main" workingBranch="feature/x"]',
         ];
     }
     if (role === 'coder') {
@@ -101,6 +111,15 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
             'Coder valid: [task_linkage action="create_git_branch" repo="org/repo" baseBranch="main" workingBranch="feature/x"]',
             'Coder valid: [task_linkage action="create_pull_request" repo="org/repo" title="Fix parser bug" description="Implements fix." headBranch="feature/x" baseBranch="main"]',
             'Coder invalid: [task_linkage action="create_linear_issue" title="..." description="..." teamId="..."]',
+        ];
+    }
+    if (role === 'architect') {
+        return [
+            'Architect guidance: produce implementation-oriented technical design before coding.',
+            'Define components/modules/services, API/data flow, and major boundaries.',
+            'Mention key tradeoffs and technical risks briefly.',
+            'Provide a practical design outline that enables the coder stage.',
+            'Do not act as reviewer/tester; do not write full code unless explicitly requested.',
         ];
     }
     if (role === 'reviewer') {
@@ -131,36 +150,37 @@ function buildRolePromptGuidance(role: WorkflowRole): string[] {
 function normalizeWorkflowRole(value?: string): WorkflowRole | null {
     if (!value) return null;
     const role = value.trim().toLowerCase();
-    if (role === 'pm' || role === 'coder' || role === 'reviewer' || role === 'tester') return role;
-    return null;
+    if (!role) return null;
+    if (role === 'pm') return 'scrum_master';
+    return role;
 }
 
 export function detectWorkflowRole(agentId: string, agent: AgentConfig): WorkflowRole {
     const explicitRole = normalizeWorkflowRole(agent.role);
     if (explicitRole) return explicitRole;
-    if (typeof agent.role === 'string' && agent.role.trim().length > 0) {
-        warnTinyEvent({
-            type: 'workflow_role_invalid_explicit',
-            agentId,
-            role: 'unknown',
-            message: `Invalid explicit role '${agent.role}'`,
-            metadata: { configuredRole: agent.role },
-        });
-        return 'unknown';
-    }
     const mappedRole = normalizeWorkflowRole(agent.workflowRole);
     if (mappedRole) return mappedRole;
 
     const id = agentId.toLowerCase();
+    if (id.includes('scrum') || id.includes('sm')) {
+        warnTinyEvent({
+            type: 'workflow_role_heuristic_fallback',
+            agentId,
+            role: 'scrum_master',
+            message: 'Role inferred by agentId heuristic',
+            metadata: { inferredFrom: 'agentId:scrum|sm' },
+        });
+        return 'scrum_master';
+    }
     if (id.includes('pm')) {
         warnTinyEvent({
             type: 'workflow_role_heuristic_fallback',
             agentId,
-            role: 'pm',
+            role: 'scrum_master',
             message: 'Role inferred by agentId heuristic',
             metadata: { inferredFrom: 'agentId:pm' },
         });
-        return 'pm';
+        return 'scrum_master';
     }
     if (id.includes('coder') || id.includes('dev')) {
         warnTinyEvent({
@@ -229,15 +249,19 @@ export function buildTaskLinkageContext(
     log('INFO', `[TASK_LINKAGE] Resolved linkage ${linkageSummary(linkage).join(' ')}`);
 
     const roleHint =
-        role === 'pm'
-            ? 'If there is no linked Linear issue, create one and emit a task_linkage command.'
-            : role === 'coder'
-                ? 'Reuse repo/baseBranch when present. Create/attach branch and PR via task_linkage commands.'
-                : role === 'reviewer'
-                    ? 'Use linked Linear and PR context during review.'
-                    : role === 'tester'
-                        ? 'Use linked Linear and PR context during test validation.'
-                        : 'Use linked task context.';
+        role === 'ba'
+            ? 'Clarify business requirements, scope, and acceptance criteria before implementation.'
+            : role === 'scrum_master'
+                ? 'If there is no linked Linear issue, create one and emit a task_linkage command.'
+                : role === 'architect'
+                    ? 'Provide technical design and implementation plan before coding starts.'
+                    : role === 'coder'
+                        ? 'Reuse repo/baseBranch when present. Create/attach branch and PR via task_linkage commands.'
+                        : role === 'reviewer'
+                            ? 'Use linked Linear and PR context during review.'
+                            : role === 'tester'
+                                ? 'Use linked Linear and PR context during test validation.'
+                                : 'Use linked task context.';
 
     return [
         '[TASK_LINKAGE_CONTEXT]',
@@ -288,7 +312,7 @@ export function buildTesterSynthesizedFocusFromLinkage(taskId: string, role: Wor
 }
 
 function validateAllowed(role: WorkflowRole, action: string): string | null {
-    const allowed = ROLE_COMMAND_CONTRACT[role];
+    const allowed = ROLE_COMMAND_CONTRACT[role] || [];
     if (!allowed.includes(action as CommandAction)) {
         return `role '${role}' is not allowed to run action '${action}'`;
     }

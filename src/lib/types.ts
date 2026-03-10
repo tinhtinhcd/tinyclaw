@@ -36,10 +36,15 @@ export interface TeamConfig {
     leader_agent: string;
     workflow?: {
         type: 'dev_pipeline';
-        pm: string;
-        coder: string;
-        reviewer: string;
-        tester: string;
+        // Legacy fixed-role workflow config
+        pm?: string;
+        scrum_master?: string;
+        coder?: string;
+        reviewer?: string;
+        tester?: string;
+        // New config-driven workflow references
+        workflowId?: string;
+        stages?: string[]; // role names
     };
 }
 
@@ -60,6 +65,11 @@ export interface TaskLinkage {
     pullRequestUrl?: string;
     currentOwnerAgentId?: string;
     status?: TaskStatus;
+    devPipelineAwaitingApproval?: boolean;
+    devPipelineAwaitingRole?: string;
+    devPipelineNextRole?: string;
+    devPipelineWorkflowId?: string;
+    // Legacy approval flag kept for backward compatibility.
     devPipelineAwaitingPmApproval?: boolean;
     devPipelineApprovedAt?: number;
 }
@@ -137,6 +147,14 @@ export interface Settings {
         providerOptions?: Record<string, Record<string, unknown>>;
     };
     roleDefaults?: Record<string, AgentRoleDefault>;
+    roles?: Record<string, {
+        type?: string;
+        readOnly?: boolean;
+        requiresApprovalToAdvance?: boolean;
+    }>;
+    workflows?: Record<string, {
+        stages: string[];
+    }>;
     agentDefaults?: AgentRoleDefault;
     agents?: Record<string, AgentConfig>;
     custom_providers?: Record<string, CustomProvider>;
@@ -184,6 +202,11 @@ export interface Conversation {
         type: 'dev_pipeline';
         sequence: string[];
         currentIndex: number;
+        stageRoles?: string[];
+        requiresApprovalIndices?: number[];
+        waitingForApproval?: boolean;
+        completedStages?: string[];
+        workflowId?: string;
     };
     taskId?: string;
 }

@@ -1,14 +1,14 @@
 {
   "agents": {
-    "pm": {
-      "name": "PM",
-      "role": "pm",
+    "scrum_master": {
+      "name": "Scrum Master",
+      "role": "scrum_master",
       "provider": "openrouter",
       "model": "openai/gpt-4.1-mini",
       "providerOptions": {
         "temperature": 0.2
       },
-      "working_directory": "pm"
+      "working_directory": "scrum_master"
     },
     "coder": {
       "name": "Coder",

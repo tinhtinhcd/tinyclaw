@@ -224,7 +224,7 @@ export function setDevPipelineAwaitingPmApproval(taskId: string, awaiting: boole
         const linkage = ensureTaskLinkage(t);
         linkage.devPipelineAwaitingPmApproval = awaiting;
     });
-    log('INFO', `[TASK_LINKAGE] PM approval gate for ${taskId}: awaiting=${awaiting}`);
+    log('INFO', `[TASK_LINKAGE] Scrum Master approval gate for ${taskId}: awaiting=${awaiting}`);
     emitTinyEvent({
         type: awaiting ? 'linkage.pm_approval_waiting' : 'linkage.pm_approval_cleared',
         taskId,
@@ -240,11 +240,38 @@ export function markDevPipelineApproved(taskId: string): TaskLinkage {
         linkage.devPipelineAwaitingPmApproval = false;
         linkage.devPipelineApprovedAt = approvedAt;
     });
-    log('INFO', `[TASK_LINKAGE] PM approval granted for ${taskId}`);
+    log('INFO', `[TASK_LINKAGE] Scrum Master approval granted for ${taskId}`);
     emitTinyEvent({
         type: 'linkage.pm_approval_granted',
         taskId,
         metadata: { approvedAt },
+    });
+    return task.linkage!;
+}
+
+export function setDevPipelineApprovalState(taskId: string, state: {
+    awaitingApproval: boolean;
+    awaitingRole?: string;
+    nextRole?: string;
+    workflowId?: string;
+}): TaskLinkage {
+    const task = updateTask(taskId, t => {
+        const linkage = ensureTaskLinkage(t);
+        linkage.devPipelineAwaitingPmApproval = state.awaitingApproval;
+        linkage.devPipelineAwaitingApproval = state.awaitingApproval;
+        linkage.devPipelineAwaitingRole = state.awaitingRole;
+        linkage.devPipelineNextRole = state.nextRole;
+        linkage.devPipelineWorkflowId = state.workflowId;
+    });
+    emitTinyEvent({
+        type: state.awaitingApproval ? 'linkage.approval_waiting' : 'linkage.approval_cleared',
+        taskId,
+        metadata: {
+            awaitingApproval: state.awaitingApproval,
+            awaitingRole: state.awaitingRole,
+            nextRole: state.nextRole,
+            workflowId: state.workflowId,
+        },
     });
     return task.linkage!;
 }

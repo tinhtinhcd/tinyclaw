@@ -17,7 +17,9 @@ interface PendingResponse {
 
 function stageStatus(agentId: string, agentName?: string): string {
     const hay = `${agentId} ${agentName || ''}`.toLowerCase();
-    if (hay.includes('pm') || hay.includes('product')) return 'PM is analyzing';
+    if (hay.includes('ba') || hay.includes('business')) return 'BA is clarifying requirements';
+    if (hay.includes('scrum') || hay.includes('pm') || hay.includes('product')) return 'Scrum Master is analyzing';
+    if (hay.includes('architect') || hay.includes('design')) return 'Architect is designing';
     if (hay.includes('coder') || hay.includes('dev') || hay.includes('engineer')) return 'Coder is implementing';
     if (hay.includes('review')) return 'Reviewer is reviewing';
     if (hay.includes('test') || hay.includes('qa')) return 'Tester is testing';

@@ -1,0 +1,16 @@
+services:
+  tinyclaw-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Ensure Linux-valid state path inside container.
+      TINYCLAW_HOME: /app/.tinyclaw
+      TINYCLAW_API_PORT: 3777
+      UI_PORT: 3000
+      NEXT_PUBLIC_API_URL: http://localhost:3777
+    ports:
+      - "3777:3777"
+      - "3000:3000"

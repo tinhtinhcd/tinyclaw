@@ -255,15 +255,15 @@ test('Role detection heuristic fallback still works for legacy IDs', () => {
     assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), true);
 });
 
-test('Role detection does not misclassify invalid explicit role', () => {
+test('Role detection accepts explicit custom role names', () => {
     emittedEvents.length = 0;
     const role = detectWorkflowRole('dev-agent', {
         name: 'Agent',
         role: 'team_lead',
         working_directory: '.',
     });
-    assert.equal(role, 'unknown');
-    assert.equal(emittedEvents.some(e => e.type === 'role_detect.invalid_explicit'), true);
+    assert.equal(role, 'team_lead');
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.invalid_explicit'), false);
     assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
 

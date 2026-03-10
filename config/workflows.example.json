@@ -1,0 +1,93 @@
+{
+  "roles": {
+    "ba": {
+      "type": "analysis",
+      "readOnly": false
+    },
+    "scrum_master": {
+      "type": "planning",
+      "readOnly": false,
+      "requiresApprovalToAdvance": true
+    },
+    "architect": {
+      "type": "design",
+      "readOnly": false
+    },
+    "coder": {
+      "type": "implementation",
+      "readOnly": false
+    },
+    "reviewer": {
+      "type": "review",
+      "readOnly": true
+    },
+    "tester": {
+      "type": "validation",
+      "readOnly": true
+    }
+  },
+  "workflows": {
+    "full_team": {
+      "stages": ["ba", "scrum_master", "architect", "coder", "reviewer", "tester"]
+    },
+    "dev_only": {
+      "stages": ["coder", "reviewer", "tester"]
+    },
+    "scrum_master_dev": {
+      "stages": ["scrum_master", "coder", "reviewer", "tester"]
+    },
+    "analysis_only": {
+      "stages": ["ba", "scrum_master"]
+    },
+    "design_only": {
+      "stages": ["architect", "coder"]
+    }
+  },
+  "teams": {
+    "product_full": {
+      "name": "Product Full Team",
+      "agents": ["ba1", "scrum_master1", "architect1", "coder1", "reviewer1", "tester1"],
+      "leader_agent": "scrum_master1",
+      "workflow": {
+        "type": "dev_pipeline",
+        "workflowId": "full_team"
+      }
+    },
+    "engineering": {
+      "name": "Engineering Team",
+      "agents": ["coder1", "reviewer1", "tester1"],
+      "leader_agent": "coder1",
+      "workflow": {
+        "type": "dev_pipeline",
+        "workflowId": "dev_only"
+      }
+    },
+    "scrum_master_dev": {
+      "name": "Scrum Master + Dev Team",
+      "agents": ["scrum_master1", "coder1", "reviewer1", "tester1"],
+      "leader_agent": "scrum_master1",
+      "workflow": {
+        "type": "dev_pipeline",
+        "workflowId": "scrum_master_dev"
+      }
+    },
+    "analysis_team": {
+      "name": "Analysis Team",
+      "agents": ["ba1", "scrum_master1"],
+      "leader_agent": "ba1",
+      "workflow": {
+        "type": "dev_pipeline",
+        "workflowId": "analysis_only"
+      }
+    },
+    "design_team": {
+      "name": "Design Team",
+      "agents": ["architect1", "coder1"],
+      "leader_agent": "architect1",
+      "workflow": {
+        "type": "dev_pipeline",
+        "workflowId": "design_only"
+      }
+    }
+  }
+}

@@ -18,10 +18,11 @@ function deriveMappedWorkflowRole(
     const wf = teamContext?.team.workflow;
     if (!wf || wf.type !== 'dev_pipeline') return null;
     const id = agentId.toLowerCase();
-    if (wf.pm.toLowerCase() === id) return 'pm';
-    if (wf.coder.toLowerCase() === id) return 'coder';
-    if (wf.reviewer.toLowerCase() === id) return 'reviewer';
-    if (wf.tester.toLowerCase() === id) return 'tester';
+    if (wf.scrum_master && wf.scrum_master.toLowerCase() === id) return 'scrum_master';
+    if (wf.pm && wf.pm.toLowerCase() === id) return 'scrum_master';
+    if (wf.coder && wf.coder.toLowerCase() === id) return 'coder';
+    if (wf.reviewer && wf.reviewer.toLowerCase() === id) return 'reviewer';
+    if (wf.tester && wf.tester.toLowerCase() === id) return 'tester';
     return null;
 }
 
