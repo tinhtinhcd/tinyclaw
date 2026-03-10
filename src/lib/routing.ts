@@ -265,96 +265,140 @@ export function getAgentResetFlag(agentId: string, workspacePath: string): strin
 /** Sentinel when no agent is mentioned — strict mention-driven: do not run any agent */
 export const NO_AGENT_MENTIONED = 'none';
 
-/**
- * Extract all @mentions from message (standalone @word, not inside brackets).
- * Returns unique mentions in order of first appearance.
- */
-function extractMentions(text: string): string[] {
-    const seen = new Set<string>();
-    const results: string[] = [];
-    const regex = /@(\w[\w-]*)/g;
-    let m;
-    while ((m = regex.exec(text)) !== null) {
-        const id = m[1].toLowerCase();
-        if (id !== 'user' && id !== 'default' && !seen.has(id)) {
-            seen.add(id);
-            results.push(id);
+function normalizeForMatch(s: string): string {
+    return s.toLowerCase().replace(/[\s_-]/g, '');
+}
+
+function addCommonRoleAliases(
+    aliases: Map<string, { agentId: string; isTeam: boolean }>,
+    agents: Record<string, AgentConfig>,
+): void {
+    const addIfExists = (canonicalAgentId: string, ...names: string[]) => {
+        if (!agents[canonicalAgentId]) return;
+        for (const name of names) {
+            aliases.set(normalizeForMatch(name), {
+                agentId: canonicalAgentId,
+                isTeam: false,
+            });
+        }
+    };
+
+    addIfExists('ba', 'BA', 'Business Analyst');
+    addIfExists('scrum_master', 'ScrumMaster', 'Scrum Master', 'SM', 'PM');
+    addIfExists('architect', 'Architect', 'Tech Lead', 'System Architect');
+    addIfExists('coder', 'Coder', 'Developer', 'Dev');
+    addIfExists('reviewer', 'Reviewer', 'Code Reviewer');
+    addIfExists('tester', 'Tester', 'QA');
+}
+
+function buildAliasMap(
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>,
+): Map<string, { agentId: string; isTeam: boolean }> {
+    const aliases = new Map<string, { agentId: string; isTeam: boolean }>();
+
+    const add = (alias: string, value: { agentId: string; isTeam: boolean }) => {
+        const norm = normalizeForMatch(alias);
+        if (!norm) return;
+        if (!aliases.has(norm)) aliases.set(norm, value);
+    };
+
+    for (const [id, config] of Object.entries(agents)) {
+        add(id, { agentId: id, isTeam: false });
+        if (config.name) add(config.name, { agentId: id, isTeam: false });
+        add(id.replace(/_/g, ' '), { agentId: id, isTeam: false });
+        add(id.replace(/_/g, ''), { agentId: id, isTeam: false });
+        if (config.name) {
+            add(config.name.replace(/\s+/g, ''), { agentId: id, isTeam: false });
+            add(config.name.replace(/\s+/g, '_'), { agentId: id, isTeam: false });
         }
     }
-    return results;
+
+    for (const [id, config] of Object.entries(teams)) {
+        add(id, { agentId: config.leader_agent, isTeam: true });
+        if (config.name) {
+            add(config.name, { agentId: config.leader_agent, isTeam: true });
+            add(config.name.replace(/\s+/g, ''), { agentId: config.leader_agent, isTeam: true });
+            add(config.name.replace(/\s+/g, '_'), { agentId: config.leader_agent, isTeam: true });
+        }
+    }
+
+    addCommonRoleAliases(aliases, agents);
+    return aliases;
 }
 
 /**
- * Resolve a candidate mention to an agent id or team leader.
- * Returns { agentId, isTeam } or null if no match.
+ * Extract @mention candidates from message.
+ * Supports: @BA, @ScrumMaster, @Scrum Master, @scrum_master
+ * - Single identifier: @BA, @scrum_master (stops at space)
+ * - Multi-word Title Case: @Scrum Master (each extra word must start with uppercase)
+ * Longest first so "@Scrum Master" wins over "@Scrum".
  */
-function normalizeForMatch(s: string): string {
-    return s.toLowerCase().replace(/[\s_-]/g, '');
+function extractMentionCandidates(text: string): string[] {
+    const results: string[] = [];
+    const seen = new Set<string>();
+    // [A-Za-z][A-Za-z0-9_]* = first word (allows underscore). (?:\s+[A-Z][A-Za-z0-9]*)* = optional Title Case words
+    const regex = /@([A-Za-z][A-Za-z0-9_]*(?:\s+[A-Z][A-Za-z0-9]*)*)(?=[\s,.]|$)/g;
+    let m: RegExpExecArray | null;
+
+    while ((m = regex.exec(text)) !== null) {
+        let candidate = m[1].trim();
+        candidate = candidate.replace(/[.,!?;:]+$/, '').trim();
+        if (!candidate) continue;
+
+        const lowered = candidate.toLowerCase();
+        if (lowered === 'user' || lowered === 'default') continue;
+
+        if (!seen.has(lowered)) {
+            seen.add(lowered);
+            results.push(candidate);
+        }
+    }
+
+    results.sort((a, b) => b.length - a.length);
+    return results;
 }
 
 function resolveMention(
     candidateId: string,
     agents: Record<string, AgentConfig>,
-    teams: Record<string, TeamConfig>
+    teams: Record<string, TeamConfig>,
 ): { agentId: string; isTeam: boolean } | null {
-    if (agents[candidateId]) {
-        return { agentId: candidateId, isTeam: false };
-    }
-    if (teams[candidateId]) {
-        return { agentId: teams[candidateId].leader_agent, isTeam: true };
-    }
-    const norm = normalizeForMatch(candidateId);
-    for (const [id, config] of Object.entries(agents)) {
-        if (normalizeForMatch(id) === norm || normalizeForMatch(config.name || '') === norm) {
-            return { agentId: id, isTeam: false };
-        }
-    }
-    for (const [id, config] of Object.entries(teams)) {
-        if (normalizeForMatch(id) === norm || normalizeForMatch(config.name || '') === norm) {
-            return { agentId: config.leader_agent, isTeam: true };
-        }
-    }
-    return null;
+    const aliasMap = buildAliasMap(agents, teams);
+    return aliasMap.get(normalizeForMatch(candidateId)) ?? null;
 }
 
 /**
  * Parse @agent_id or @team_id from a message.
  * Strict mention-driven: only runs agents that are explicitly mentioned.
- *
- * - @ at start: same as before (prefix routing)
- * - @ anywhere in message: first valid mention wins
- * - No valid mention: returns NO_AGENT_MENTIONED — no agent runs
+ * Longest valid mention wins. Supports display-name aliases like "@Scrum Master".
+ * When mention is at start (prefix), strips it and returns the rest as message.
  */
 export function parseAgentRouting(
     rawMessage: string,
     agents: Record<string, AgentConfig>,
-    teams: Record<string, TeamConfig> = {}
+    teams: Record<string, TeamConfig> = {},
 ): { agentId: string; message: string; isTeam?: boolean } {
-    // 1. Match @agent_id or @team_id at the start (legacy prefix)
-    const prefixMatch = rawMessage.match(/^@(\S+)\s+([\s\S]*)$/);
-    if (prefixMatch) {
-        const candidateId = prefixMatch[1].toLowerCase();
-        const message = prefixMatch[2];
+    const mentions = extractMentionCandidates(rawMessage);
 
-        if (candidateId === 'default') {
-            return { agentId: NO_AGENT_MENTIONED, message: rawMessage };
-        }
-
-        const resolved = resolveMention(candidateId, agents, teams);
+    for (const candidate of mentions) {
+        const resolved = resolveMention(candidate, agents, teams);
         if (resolved) {
-            return { agentId: resolved.agentId, message, isTeam: resolved.isTeam };
+            const mentionAtStart = rawMessage.trimStart().startsWith(`@${candidate}`);
+            const message = mentionAtStart
+                ? rawMessage.replace(new RegExp(`^\\s*@${escapeRegex(candidate)}\\s*`, 'i'), '').trim() || rawMessage
+                : rawMessage;
+            return {
+                agentId: resolved.agentId,
+                message,
+                isTeam: resolved.isTeam,
+            };
         }
     }
 
-    // 2. Scan for @mentions anywhere in the message
-    const mentions = extractMentions(rawMessage);
-    for (const candidateId of mentions) {
-        const resolved = resolveMention(candidateId, agents, teams);
-        if (resolved) {
-            return { agentId: resolved.agentId, message: rawMessage, isTeam: resolved.isTeam };
-        }
-    }
-
-    // 3. No valid mention — strict: do not run any agent
     return { agentId: NO_AGENT_MENTIONED, message: rawMessage };
+}
+
+function escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

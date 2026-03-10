@@ -129,12 +129,15 @@ export async function processMessage(
             message = rawMessage;
         } else {
             const routing = parseAgentRouting(rawMessage, agents, teams);
+
             const inboundBotId = messageData.channel === 'slack' && !isInternal
                 ? (typeof messageData.sourceMetadata?.inboundBotId === 'string'
                     ? messageData.sourceMetadata.inboundBotId
                     : undefined)
                 : undefined;
-            const botMappedAgentId = (routing.agentId === 'default')
+
+            // Explicit mention ALWAYS wins. Only use inbound bot fallback when no valid mention.
+            const botMappedAgentId = (routing.agentId === NO_AGENT_MENTIONED && inboundBotId)
                 ? deriveAgentFromSlackInboundBot({
                     settings,
                     agents,
@@ -142,18 +145,24 @@ export async function processMessage(
                     log,
                 })
                 : undefined;
-            agentId = botMappedAgentId || routing.agentId;
+
+            agentId = routing.agentId !== NO_AGENT_MENTIONED
+                ? routing.agentId
+                : (botMappedAgentId ?? NO_AGENT_MENTIONED);
             message = routing.message;
             isTeamRouted = !!routing.isTeam;
-            if (botMappedAgentId) {
-                log('INFO', `Slack inbound bot '${inboundBotId}' mapped to agent '${botMappedAgentId}'`);
+
+            if (routing.agentId !== NO_AGENT_MENTIONED) {
+                log('INFO', `Explicit mention resolved to agent '${routing.agentId}'`);
+            } else if (botMappedAgentId) {
+                log('INFO', `No explicit mention found; Slack inbound bot '${inboundBotId}' mapped to agent '${botMappedAgentId}'`);
             }
         }
         if (agentId === NO_AGENT_MENTIONED || !agents[agentId]) {
             if (agentId === NO_AGENT_MENTIONED) {
                 log('INFO', `No agent mentioned in message; skipping (strict mention-driven execution)`);
                 await enqueueDirectResponse({
-                    response: 'Please mention an agent with @agent_id (e.g. @ScrumMaster, @BA) to route your message.',
+                    response: 'Please mention an agent with @agent_id (e.g. @Scrum Master, @BA) to route your message.',
                     channel,
                     sender,
                     senderId: messageData.senderId ?? undefined,
