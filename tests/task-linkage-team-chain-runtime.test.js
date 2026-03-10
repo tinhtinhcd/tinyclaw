@@ -40,6 +40,7 @@ fs.writeFileSync(path.join(tempHome, 'settings.json'), JSON.stringify({
 
 const { initQueueDb, claimAllPendingMessages, getPendingAgents, getResponsesForChannel, closeQueueDb } = require('../dist/lib/db.js');
 const { processMessageForTest } = require('../dist/queue-processor.js');
+const { onEvent } = require('../dist/lib/logging.js');
 const {
     getTaskLinkageBySlackThread,
     getTaskLinkage,
@@ -89,6 +90,8 @@ initQueueDb();
 test('PM -> Coder handoff keeps same linkage/task and final metadata is correct', async () => {
     const prompts = { pm: '', coder: '' };
     let createBranchArgs = null;
+    const events = [];
+    onEvent((type, data) => events.push({ type, data }));
 
     const invokeAgentFn = async (_agent, agentId, prompt) => {
         if (agentId === 'pm') {
@@ -194,8 +197,15 @@ test('PM -> Coder handoff keeps same linkage/task and final metadata is correct'
     const final = responses.find(r => r.message_id === 'msg_team_pm_1');
     assert.ok(final);
     assert.ok(!final.message.includes('[task_linkage'));
-    assert.ok(final.message.includes('@pm: PM plan ready.'));
-    assert.ok(final.message.includes('@coder: Coder implemented parser fix.'));
+    assert.equal(final.message.includes('@pm:'), false);
+    assert.equal(final.message.includes('@coder:'), false);
+    assert.ok(final.message.includes('Coder implemented parser fix.'));
+
+    // Runtime still emits stage start events for per-role status posting.
+    const stepStarts = events.filter(e => e.type === 'chain_step_start' && e.data?.messageId === 'msg_team_pm_1');
+    assert.equal(stepStarts.length >= 2, true);
+    assert.equal(stepStarts.some(e => e.data?.agentId === 'pm'), true);
+    assert.equal(stepStarts.some(e => e.data?.agentId === 'coder'), true);
 
     const metadata = final.metadata ? JSON.parse(final.metadata) : {};
     assert.equal(metadata.agentId, 'coder');

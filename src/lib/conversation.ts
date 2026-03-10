@@ -11,6 +11,13 @@ import { convertTagsToReadable } from './routing';
 export const conversations = new Map<string, Conversation>();
 
 export const MAX_CONVERSATION_MESSAGES = 50;
+type TeamPublicResponsePolicy = 'final_agent_only' | 'aggregate';
+
+function getTeamPublicResponsePolicy(): TeamPublicResponsePolicy {
+    const raw = String(process.env.TEAM_PUBLIC_RESPONSE_POLICY || '').trim().toLowerCase();
+    if (raw === 'aggregate') return 'aggregate';
+    return 'final_agent_only';
+}
 
 // Per-conversation locks to prevent race conditions
 const conversationLocks = new Map<string, Promise<void>>();
@@ -145,14 +152,21 @@ export function completeConversation(conv: Conversation): void {
         agents: conv.responses.map(s => s.agentId),
     });
 
-    // Aggregate responses
+    // Build a single public response according to team policy.
+    const policy = getTeamPublicResponsePolicy();
     let finalResponse: string;
-    if (conv.responses.length === 1) {
-        finalResponse = conv.responses[0].response;
+    if (policy === 'aggregate') {
+        if (conv.responses.length === 1) {
+            finalResponse = conv.responses[0].response;
+        } else {
+            finalResponse = conv.responses
+                .map(step => `@${step.agentId}: ${step.response}`)
+                .join('\n\n------\n\n');
+        }
     } else {
-        finalResponse = conv.responses
-            .map(step => `@${step.agentId}: ${step.response}`)
-            .join('\n\n------\n\n');
+        finalResponse = conv.responses.length > 0
+            ? conv.responses[conv.responses.length - 1].response
+            : '';
     }
 
     // Save chat history
@@ -228,6 +242,12 @@ export function completeConversation(conv: Conversation): void {
 
     log('INFO', `✓ Response ready [${conv.channel}] ${conv.sender} (${finalResponse.length} chars)`);
     emitEvent('response_ready', { channel: conv.channel, sender: conv.sender, responseLength: finalResponse.length, responseText: finalResponse, messageId: conv.messageId });
+    emitEvent('team_public_response_policy_applied', {
+        teamId: conv.teamContext.teamId,
+        messageId: conv.messageId,
+        policy,
+        responseCount: conv.responses.length,
+    });
 
     // Clean up
     conversations.delete(conv.id);
