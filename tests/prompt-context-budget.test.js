@@ -165,8 +165,8 @@ test('runtime budget emits truncation/drop events and preserves core context', a
         ].join('\n')),
     });
     assert.ok(capturedPrompt.includes('[TASK_LINKAGE_CONTEXT]'));
-    assert.ok(events.some(e => e.type === 'context_budget_truncation'));
-    assert.ok(events.some(e => e.type === 'context_block_dropped'));
+    assert.ok(events.some(e => e.type === 'context_budget.truncation'));
+    assert.ok(events.some(e => e.type === 'context_budget.block_dropped'));
     delete process.env.PROMPT_CONTEXT_MAX_CHARS;
 });
 

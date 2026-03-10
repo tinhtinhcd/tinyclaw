@@ -242,7 +242,7 @@ test('Role detection prefers explicit role over heuristics', () => {
         working_directory: '.',
     });
     assert.equal(role, 'reviewer');
-    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
 
 test('Role detection heuristic fallback still works for legacy IDs', () => {
@@ -252,7 +252,7 @@ test('Role detection heuristic fallback still works for legacy IDs', () => {
         working_directory: '.',
     });
     assert.equal(role, 'tester');
-    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), true);
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), true);
 });
 
 test('Role detection does not misclassify invalid explicit role', () => {
@@ -263,8 +263,8 @@ test('Role detection does not misclassify invalid explicit role', () => {
         working_directory: '.',
     });
     assert.equal(role, 'unknown');
-    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_invalid_explicit'), true);
-    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.invalid_explicit'), true);
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
 
 test('Role detection uses mapped workflow role before heuristics', () => {
@@ -275,5 +275,5 @@ test('Role detection uses mapped workflow role before heuristics', () => {
         working_directory: '.',
     });
     assert.equal(role, 'pm');
-    assert.equal(emittedEvents.some(e => e.type === 'workflow_role_heuristic_fallback'), false);
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });

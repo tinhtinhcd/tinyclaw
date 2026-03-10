@@ -81,7 +81,7 @@ test('coder worker timeout emits structured timeout event', async () => {
         workingBranch: 'feature/obs-timeout',
         prompt: 'run timeout path',
     }));
-    assert.ok(findEvent('worker_timeout', 'obs_timeout_task'));
+    assert.ok(findEvent('worker.timeout', 'obs_timeout_task'));
 });
 
 test('coder worker retry emits structured retry event', async () => {
@@ -102,7 +102,7 @@ test('coder worker retry emits structured retry event', async () => {
         prompt: 'run retry path',
     });
     assert.equal(result.pullRequestNumber, 101);
-    assert.ok(findEvent('worker_retry', 'obs_retry_task'));
+    assert.ok(findEvent('worker.retry', 'obs_retry_task'));
 });
 
 test('task_linkage command rejection emits structured event', async () => {
@@ -124,7 +124,7 @@ test('task_linkage command rejection emits structured event', async () => {
         () => {},
         deps,
     );
-    const rejected = findEvent('linkage_command_rejected', 'obs_cmd_task');
+    const rejected = findEvent('command_validation.rejected', 'obs_cmd_task');
     assert.ok(rejected);
     assert.ok(String(rejected.data.message || rejected.data.metadata?.reason || '').length > 0);
 });
@@ -146,8 +146,8 @@ test('reviewer PR fetch failure emits fallback event', async () => {
         },
     );
     assert.equal(context, '');
-    assert.ok(findEvent('reviewer_pr_fetch_failed', 'obs_fetch_task'));
-    assert.ok(findEvent('reviewer_pr_fetch_fallback_linkage', 'obs_fetch_task'));
+    assert.ok(findEvent('review_fetch.failed', 'obs_fetch_task'));
+    assert.ok(findEvent('review_fetch.fallback_linkage', 'obs_fetch_task'));
 });
 
 test('tester synthesized focus generation emits event', () => {
@@ -160,7 +160,7 @@ test('tester synthesized focus generation emits event', () => {
         files: ['src/api/handler.ts', 'tests/api/handler.test.ts'],
     });
     assert.ok(block.includes('[TESTER_SYNTHESIZED_FOCUS]'));
-    assert.ok(findEvent('tester_focus_generated', 'obs_focus_task'));
+    assert.ok(findEvent('tester_focus.generated', 'obs_focus_task'));
 });
 
 test.after(() => {

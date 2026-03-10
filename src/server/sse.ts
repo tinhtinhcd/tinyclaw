@@ -21,5 +21,10 @@ export function removeSSEClient(res: http.ServerResponse): void {
 
 // Wire emitEvent → SSE so every queue-processor event is also pushed to the web.
 onEvent((type, data) => {
-    broadcastSSE(type, { type, timestamp: Date.now(), ...data });
+    const payload = { type, timestamp: Date.now(), ...data };
+    broadcastSSE(type, payload);
+    // Lightweight normalized stream for dashboards/log consumers.
+    if (/^(worker|linkage|review_fetch|tester_focus|role_detect|command_validation|context_budget)\./.test(type)) {
+        broadcastSSE('runtime.event', payload);
+    }
 });

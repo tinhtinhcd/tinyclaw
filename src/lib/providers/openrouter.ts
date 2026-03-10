@@ -16,6 +16,13 @@ interface OpenRouterResponse {
     error?: { message?: string };
 }
 
+function parsePositiveInt(value: unknown): number | undefined {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return undefined;
+    const intVal = Math.floor(n);
+    return intVal > 0 ? intVal : undefined;
+}
+
 export class OpenRouterProvider implements AIProvider {
     name = 'openrouter';
 
@@ -38,6 +45,10 @@ export class OpenRouterProvider implements AIProvider {
         const temperature = typeof request.providerOptions?.temperature === 'number'
             ? request.providerOptions.temperature
             : undefined;
+        const optionMaxTokens = parsePositiveInt(request.providerOptions?.maxTokens)
+            ?? parsePositiveInt(request.providerOptions?.max_tokens);
+        const envMaxTokens = parsePositiveInt(process.env.OPENROUTER_MAX_TOKENS);
+        const maxTokens = optionMaxTokens ?? envMaxTokens;
 
         const body: Record<string, unknown> = {
             model: request.model,
@@ -48,6 +59,9 @@ export class OpenRouterProvider implements AIProvider {
         };
         if (temperature !== undefined) {
             body.temperature = temperature;
+        }
+        if (maxTokens !== undefined) {
+            body.max_tokens = maxTokens;
         }
 
         const res = await fetch(`${this.baseUrl}/chat/completions`, {

@@ -18,6 +18,7 @@
     "test:coder-worker:runtime": "npm run build:main && node --test tests/coder-worker-runtime.test.js",
     "test:coder-worker:cli-runtime": "npm run build:main && node --test tests/coder-worker-cli-runtime.test.js",
     "test:observability": "npm run build:main && node --test tests/observability-events.test.js",
+    "test:event-model-sse": "npm run build:main && node --test tests/event-model-sse.test.js",
     "whatsapp": "node dist/channels/whatsapp-client.js",
     "discord": "node dist/channels/discord-client.js",
     "telegram": "node dist/channels/telegram-client.js",

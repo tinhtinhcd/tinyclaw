@@ -389,7 +389,7 @@ test('cursor_cli structured mode rejects plain text stdout', async () => {
     const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_plaintext_reject');
     assert.ok(resp);
     assert.ok(resp.message.includes('Sorry, I encountered an error processing your request.'));
-    assert.equal(eventBuffer.some(e => e.type === 'worker_output_parse_failed' && e.data.taskId === linkage.taskId), true);
+    assert.equal(eventBuffer.some(e => e.type === 'worker.output_parse_failed' && e.data.taskId === linkage.taskId), true);
 });
 
 test('cursor_cli summary mode accepts plain text stdout', async () => {
@@ -419,7 +419,7 @@ test('cursor_cli summary mode accepts plain text stdout', async () => {
     const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_plaintext_accept');
     assert.ok(resp);
     assert.ok(resp.message.includes('plain text summary from worker'));
-    assert.equal(eventBuffer.some(e => e.type === 'worker_succeeded' && e.data.taskId === task.id && e.data.metadata?.summaryOnly === true), true);
+    assert.equal(eventBuffer.some(e => e.type === 'worker.succeeded' && e.data.taskId === task.id && e.data.metadata?.summaryOnly === true), true);
 });
 
 test('invalid CODER_WORKER_CLI_ARGS_JSON emits config error event', async () => {
@@ -450,7 +450,7 @@ test('invalid CODER_WORKER_CLI_ARGS_JSON emits config error event', async () => 
     const resp = getResponsesForChannel('slack').find(r => r.message_id === 'msg_cli_bad_args');
     assert.ok(resp);
     assert.ok(resp.message.includes('Sorry, I encountered an error processing your request.'));
-    assert.equal(eventBuffer.some(e => e.type === 'worker_args_config_invalid' && e.data.taskId === task.id), true);
+    assert.equal(eventBuffer.some(e => e.type === 'worker.args_config_invalid' && e.data.taskId === task.id), true);
     process.env.CODER_WORKER_CLI_ARGS_JSON = JSON.stringify([workerScript]);
 });
 
