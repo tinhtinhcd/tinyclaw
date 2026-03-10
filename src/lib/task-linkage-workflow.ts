@@ -110,6 +110,7 @@ export function buildRolePromptGuidance(role: WorkflowRole): string[] {
     if (role === 'scrum_master' || role === 'pm') {
         return [
             ...base,
+            "PM guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             "Scrum Master guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             'Reuse existing Linear linkage when present.',
             'Avoid emitting commands when title/description/teamId are missing.',

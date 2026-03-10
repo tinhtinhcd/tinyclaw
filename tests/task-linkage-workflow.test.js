@@ -267,13 +267,13 @@ test('Role detection accepts explicit custom role names', () => {
     assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
 
-test('Role detection uses mapped workflow role before heuristics', () => {
+test('Role detection maps workflow role pm to scrum_master before heuristics', () => {
     emittedEvents.length = 0;
     const role = detectWorkflowRole('dev-agent', {
         name: 'Agent',
         workflowRole: 'pm',
         working_directory: '.',
     });
-    assert.equal(role, 'pm');
+    assert.equal(role, 'scrum_master');
     assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
