@@ -27,7 +27,9 @@ import {
 } from '../lib/conversation';
 import {
     createTaskLinkage,
+    getTaskLinkage,
     getTaskLinkageBySlackThread,
+    markDevPipelineApproved,
 } from '../lib/task-linkage';
 import {
     applyTaskLinkageCommands,
@@ -38,7 +40,7 @@ import { errorTinyEvent, emitTinyEvent } from '../lib/observability';
 import { enrichPromptContext } from './prompt-context';
 import { runWorkerOrInvokeAgent } from './worker-delegation';
 import { enqueueDirectResponse } from './response-runtime';
-import { getDevPipelineSequence, handleConversationHandoffs } from './handoff-runtime';
+import { getDevPipelineSequence, handleConversationHandoffs, isExplicitApprovalMessage } from './handoff-runtime';
 
 export interface ProcessMessageOverrides {
     invokeAgentFn?: typeof invokeAgent;
@@ -109,7 +111,7 @@ export async function processMessage(
         if (!agents[agentId]) {
             agentId = Object.keys(agents)[0];
         }
-        const agent = agents[agentId];
+        let agent = agents[agentId];
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         if (!isInternal) {
             emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
@@ -171,6 +173,43 @@ export async function processMessage(
                 }
             } catch (error) {
                 log('WARN', `Task linkage update failed for Slack message ${messageId}: ${(error as Error).message}`);
+            }
+        }
+
+        if (!isInternal && teamContext?.team.workflow?.type === 'dev_pipeline' && linkedTaskId) {
+            const sequence = getDevPipelineSequence(teamContext.team, agents, log);
+            const pmAgentId = sequence?.[0];
+            const coderAgentId = sequence?.[1];
+            const linkage = getTaskLinkage(linkedTaskId);
+            const awaitingPmApproval = !!linkage?.devPipelineAwaitingPmApproval;
+            if (awaitingPmApproval && pmAgentId) {
+                if (isExplicitApprovalMessage(message) && coderAgentId && agents[coderAgentId]) {
+                    markDevPipelineApproved(linkedTaskId);
+                    const previousAgent = agentId;
+                    agentId = coderAgentId;
+                    agent = agents[agentId];
+                    log('INFO', `Dev pipeline approval detected for task ${linkedTaskId}; rerouting @${previousAgent} → @${agentId}`);
+                    emitEvent('dev_pipeline_approval_granted', {
+                        taskId: linkedTaskId,
+                        teamId: teamContext.teamId,
+                        previousAgent,
+                        nextAgent: agentId,
+                        messageId,
+                    });
+                } else {
+                    if (agentId !== pmAgentId && agents[pmAgentId]) {
+                        const previousAgent = agentId;
+                        agentId = pmAgentId;
+                        agent = agents[agentId];
+                        log('INFO', `Dev pipeline still awaiting approval for task ${linkedTaskId}; forcing route @${previousAgent} → @${agentId}`);
+                    }
+                    emitEvent('dev_pipeline_waiting_approval', {
+                        taskId: linkedTaskId,
+                        teamId: teamContext.teamId,
+                        messageId,
+                        agentId,
+                    });
+                }
             }
         }
 

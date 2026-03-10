@@ -218,3 +218,33 @@ export function setTaskStatus(taskId: string, status: TaskStatus): TaskLinkage {
     });
     return task.linkage!;
 }
+
+export function setDevPipelineAwaitingPmApproval(taskId: string, awaiting: boolean): TaskLinkage {
+    const task = updateTask(taskId, t => {
+        const linkage = ensureTaskLinkage(t);
+        linkage.devPipelineAwaitingPmApproval = awaiting;
+    });
+    log('INFO', `[TASK_LINKAGE] PM approval gate for ${taskId}: awaiting=${awaiting}`);
+    emitTinyEvent({
+        type: awaiting ? 'linkage.pm_approval_waiting' : 'linkage.pm_approval_cleared',
+        taskId,
+        metadata: { awaitingPmApproval: awaiting },
+    });
+    return task.linkage!;
+}
+
+export function markDevPipelineApproved(taskId: string): TaskLinkage {
+    const approvedAt = Date.now();
+    const task = updateTask(taskId, t => {
+        const linkage = ensureTaskLinkage(t);
+        linkage.devPipelineAwaitingPmApproval = false;
+        linkage.devPipelineApprovedAt = approvedAt;
+    });
+    log('INFO', `[TASK_LINKAGE] PM approval granted for ${taskId}`);
+    emitTinyEvent({
+        type: 'linkage.pm_approval_granted',
+        taskId,
+        metadata: { approvedAt },
+    });
+    return task.linkage!;
+}

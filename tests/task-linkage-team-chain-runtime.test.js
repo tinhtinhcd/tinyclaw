@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tinyclaw-team-chain-test-'));
 process.env.TINYCLAW_HOME = tempHome;
+process.env.CODER_WORKER_MODE = 'off';
 
 fs.mkdirSync(tempHome, { recursive: true });
 fs.writeFileSync(path.join(tempHome, 'settings.json'), JSON.stringify({
@@ -214,5 +215,6 @@ test('PM -> Coder handoff keeps same linkage/task and final metadata is correct'
 });
 
 test.after(() => {
+    delete process.env.CODER_WORKER_MODE;
     closeQueueDb();
 });

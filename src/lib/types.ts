@@ -60,6 +60,8 @@ export interface TaskLinkage {
     pullRequestUrl?: string;
     currentOwnerAgentId?: string;
     status?: TaskStatus;
+    devPipelineAwaitingPmApproval?: boolean;
+    devPipelineApprovedAt?: number;
 }
 
 export interface Task {

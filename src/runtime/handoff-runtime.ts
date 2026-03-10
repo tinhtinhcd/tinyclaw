@@ -2,6 +2,34 @@ import { AgentConfig, Conversation, MessageData, TeamConfig } from '../lib/types
 import { emitEvent } from '../lib/logging';
 import { enqueueInternalMessage, incrementPending } from '../lib/conversation';
 import { extractTeammateMentions } from '../lib/routing';
+import { setDevPipelineAwaitingPmApproval } from '../lib/task-linkage';
+
+function normalizeApprovalText(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[.!?]/g, '')
+        .trim();
+}
+
+export function isExplicitApprovalMessage(text: string): boolean {
+    const normalized = normalizeApprovalText(text);
+    if (!normalized) return false;
+    const approvals = new Set([
+        'approve',
+        'approved',
+        'go ahead',
+        'continue',
+        'proceed',
+        'start',
+        'yes continue',
+        'yes, continue',
+        'ok continue',
+        'okay continue',
+        'please continue',
+    ]);
+    return approvals.has(normalized);
+}
 
 export function getDevPipelineSequence(
     team: TeamConfig,
@@ -59,6 +87,19 @@ export function handleConversationHandoffs(params: {
 
         const currentStage = workflowState.currentIndex;
         const lastStage = workflowState.sequence.length - 1;
+        if (!invocationFailed && currentStage === 0) {
+            if (conv.taskId) {
+                setDevPipelineAwaitingPmApproval(conv.taskId, true);
+            }
+            log('INFO', `Dev pipeline waiting user approval after PM for conversation ${conv.id}`);
+            emitEvent('dev_pipeline_waiting_approval', {
+                teamId: conv.teamContext.teamId,
+                conversationId: conv.id,
+                taskId: conv.taskId || null,
+                currentAgent: agentId,
+            });
+            return;
+        }
         if (!invocationFailed && currentStage < lastStage && conv.totalMessages < conv.maxMessages) {
             const nextStage = currentStage + 1;
             const nextAgentId = workflowState.sequence[nextStage];
@@ -87,7 +128,7 @@ export function handleConversationHandoffs(params: {
                 senderId: messageData.senderId,
                 messageId: messageData.messageId,
             });
-        } else if (currentStage < lastStage) {
+        } else if (!invocationFailed && currentStage < lastStage) {
             log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — stopping dev_pipeline handoff`);
         }
         return;
