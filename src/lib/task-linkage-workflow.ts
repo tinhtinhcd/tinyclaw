@@ -12,6 +12,17 @@ import { createBranch } from '../integrations/git/repo-service';
 import { createPullRequest, getPullRequestDetails } from '../integrations/git/pr-service';
 import { emitTinyEvent, warnTinyEvent } from './observability';
 
+const MAX_FETCHED_PR_BODY_CHARS = 1500;
+const MAX_TESTER_SYNTHESIZED_FOCUS_CHARS = 1200;
+
+function truncateWithMarker(value: string, maxChars: number): string {
+    const marker = '... (truncated)';
+    if (maxChars <= 0) return '';
+    if (value.length <= maxChars) return value;
+    if (maxChars <= marker.length) return marker.slice(0, maxChars);
+    return `${value.slice(0, maxChars - marker.length)}${marker}`;
+}
+
 export type WorkflowRole = 'pm' | 'coder' | 'reviewer' | 'tester' | 'unknown';
 type CommandAction =
     | 'attach_linear'
@@ -228,31 +239,6 @@ export function buildTaskLinkageContext(
                         ? 'Use linked Linear and PR context during test validation.'
                         : 'Use linked task context.';
 
-    const linkedPrBlock = (role === 'reviewer' || role === 'tester')
-        ? [
-            '',
-            role === 'reviewer' ? '[REVIEWER_LINKED_PR_CONTEXT]' : '[TESTER_LINKED_PR_CONTEXT]',
-            `taskId=${linkage.taskId}`,
-            `linearIssueIdentifier=${linkage.linearIssueIdentifier || '-'}`,
-            `repo=${linkage.repo || '-'}`,
-            `workingBranch=${linkage.workingBranch || '-'}`,
-            `pullRequestNumber=${typeof linkage.pullRequestNumber === 'number' ? linkage.pullRequestNumber : '-'}`,
-            `pullRequestUrl=${linkage.pullRequestUrl || '-'}`,
-            role === 'reviewer'
-                ? 'Use these linked fields directly in the review; avoid requesting them again when present.'
-                : 'Use these linked fields directly in testing analysis; avoid requesting them again when present.',
-            role === 'reviewer' ? '[/REVIEWER_LINKED_PR_CONTEXT]' : '[/TESTER_LINKED_PR_CONTEXT]',
-        ]
-        : [];
-    const synthesizedTesterFocusBlock = role === 'tester' && !linkage.pullRequestNumber && !linkage.pullRequestUrl
-        ? synthesizeTesterFocusBlock({
-            taskId,
-            repo: linkage.repo,
-            workingBranch: linkage.workingBranch,
-            linearIssueIdentifier: linkage.linearIssueIdentifier,
-        })
-        : '';
-
     return [
         '[TASK_LINKAGE_CONTEXT]',
         `taskId: ${linkage.taskId}`,
@@ -261,14 +247,44 @@ export function buildTaskLinkageContext(
         `pullRequest: number=${typeof linkage.pullRequestNumber === 'number' ? linkage.pullRequestNumber : '-'} url=${linkage.pullRequestUrl || '-'}`,
         `currentOwner: ${linkage.currentOwnerAgentId || '-'}`,
         `status: ${linkage.status || '-'}`,
-        ...linkedPrBlock,
-        ...(synthesizedTesterFocusBlock ? ['', synthesizedTesterFocusBlock] : []),
         '',
         roleHint,
         roleContractHint(role),
         ...buildRolePromptGuidance(role),
         '[/TASK_LINKAGE_CONTEXT]',
     ].join('\n');
+}
+
+export function buildRoleLinkedPrContext(taskId: string, role: WorkflowRole): string {
+    if (role !== 'reviewer' && role !== 'tester') return '';
+    const linkage = getTaskLinkage(taskId);
+    if (!linkage) return '';
+    return [
+        role === 'reviewer' ? '[REVIEWER_LINKED_PR_CONTEXT]' : '[TESTER_LINKED_PR_CONTEXT]',
+        `taskId=${linkage.taskId}`,
+        `linearIssueIdentifier=${linkage.linearIssueIdentifier || '-'}`,
+        `repo=${linkage.repo || '-'}`,
+        `workingBranch=${linkage.workingBranch || '-'}`,
+        `pullRequestNumber=${typeof linkage.pullRequestNumber === 'number' ? linkage.pullRequestNumber : '-'}`,
+        `pullRequestUrl=${linkage.pullRequestUrl || '-'}`,
+        role === 'reviewer'
+            ? 'Use these linked fields directly in the review; avoid requesting them again when present.'
+            : 'Use these linked fields directly in testing analysis; avoid requesting them again when present.',
+        role === 'reviewer' ? '[/REVIEWER_LINKED_PR_CONTEXT]' : '[/TESTER_LINKED_PR_CONTEXT]',
+    ].join('\n');
+}
+
+export function buildTesterSynthesizedFocusFromLinkage(taskId: string, role: WorkflowRole): string {
+    if (role !== 'tester') return '';
+    const linkage = getTaskLinkage(taskId);
+    if (!linkage) return '';
+    if (linkage.pullRequestNumber || linkage.pullRequestUrl) return '';
+    return synthesizeTesterFocusBlock({
+        taskId,
+        repo: linkage.repo,
+        workingBranch: linkage.workingBranch,
+        linearIssueIdentifier: linkage.linearIssueIdentifier,
+    });
 }
 
 function validateAllowed(role: WorkflowRole, action: string): string | null {
@@ -492,6 +508,7 @@ export function synthesizeTesterFocusBlock(input: TesterFocusInput): string {
         ...(regressionFocus.length > 0 ? regressionFocus.map(item => `- ${item}`) : ['- Baseline smoke/regression around related user flows']),
         '[/TESTER_SYNTHESIZED_FOCUS]',
     ].join('\n');
+    const bounded = truncateWithMarker(block, MAX_TESTER_SYNTHESIZED_FOCUS_CHARS);
     emitTinyEvent({
         type: 'tester_focus_generated',
         taskId: input.taskId,
@@ -500,9 +517,12 @@ export function synthesizeTesterFocusBlock(input: TesterFocusInput): string {
             affectedModulesCount: modules.length,
             hotspotCount: hotspots.length,
             changedFiles: input.changedFiles,
+            originalLength: block.length,
+            finalLength: bounded.length,
+            truncated: bounded.length < block.length,
         },
     });
-    return block;
+    return bounded;
 }
 
 function parsePullRequestNumberFromUrl(url?: string): number | undefined {
@@ -576,6 +596,7 @@ export async function buildRoleFetchedPrContext(
                 changedFiles: pr.changedFiles,
             },
         });
+        const body = truncateWithMarker(pr.body || '-', MAX_FETCHED_PR_BODY_CHARS);
         return [
             startTag,
             `repo=${linkage.repo}`,
@@ -586,7 +607,7 @@ export async function buildRoleFetchedPrContext(
             `baseBranch=${pr.baseBranch}`,
             `headBranch=${pr.headBranch}`,
             `changes=+${pr.additions}/-${pr.deletions} across ${pr.changedFiles} files`,
-            `body=${pr.body || '-'}`,
+            `body=${body}`,
             'filesPreview:',
             filesPreview || '-',
             endTag,

@@ -14,6 +14,7 @@
     "test:task-linkage:runtime:reviewer-pr-fetch": "npm run build:main && node --test tests/reviewer-pr-fetch-runtime.test.js",
     "test:task-linkage:runtime:tester-pr": "npm run build:main && node --test tests/tester-pr-linkage-runtime.test.js",
     "test:task-linkage:runtime:tester-pr-fetch": "npm run build:main && node --test tests/tester-pr-fetch-runtime.test.js",
+    "test:prompt-context-budget": "npm run build:main && node --test tests/prompt-context-budget.test.js",
     "test:coder-worker:runtime": "npm run build:main && node --test tests/coder-worker-runtime.test.js",
     "test:coder-worker:cli-runtime": "npm run build:main && node --test tests/coder-worker-cli-runtime.test.js",
     "test:observability": "npm run build:main && node --test tests/observability-events.test.js",
