@@ -223,6 +223,7 @@ export function setDevPipelineAwaitingPmApproval(taskId: string, awaiting: boole
     const task = updateTask(taskId, t => {
         const linkage = ensureTaskLinkage(t);
         linkage.devPipelineAwaitingPmApproval = awaiting;
+        linkage.devPipelineAwaitingApproval = awaiting;
     });
     log('INFO', `[TASK_LINKAGE] Scrum Master approval gate for ${taskId}: awaiting=${awaiting}`);
     emitTinyEvent({
@@ -238,6 +239,7 @@ export function markDevPipelineApproved(taskId: string): TaskLinkage {
     const task = updateTask(taskId, t => {
         const linkage = ensureTaskLinkage(t);
         linkage.devPipelineAwaitingPmApproval = false;
+        linkage.devPipelineAwaitingApproval = false;
         linkage.devPipelineApprovedAt = approvedAt;
     });
     log('INFO', `[TASK_LINKAGE] Scrum Master approval granted for ${taskId}`);
