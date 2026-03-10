@@ -48,6 +48,8 @@ export function Sidebar() {
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
+          { href: "/agents", label: "Agents", icon: SlidersHorizontal },
+          { href: "/teams", label: "Teams", icon: Users },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
