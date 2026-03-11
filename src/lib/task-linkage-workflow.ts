@@ -110,6 +110,7 @@ export function buildRolePromptGuidance(role: WorkflowRole): string[] {
     if (role === 'scrum_master' || role === 'pm') {
         return [
             ...base,
+            "PM guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             "Scrum Master guidance: emit only 'create_linear_issue' or 'attach_linear'.",
             'Reuse existing Linear linkage when present.',
             'Avoid emitting commands when title/description/teamId are missing.',
@@ -189,60 +190,61 @@ function normalizeWorkflowRole(value?: string): WorkflowRole | null {
     return role;
 }
 
+function splitAgentIdTokens(agentId: string): string[] {
+    return agentId
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+}
+
+function hasAnyRoleToken(tokens: string[], candidates: string[]): boolean {
+    return candidates.some(candidate => tokens.includes(candidate));
+}
+
 export function detectWorkflowRole(agentId: string, agent: AgentConfig): WorkflowRole {
     const explicitRole = normalizeWorkflowRole(agent.role);
     if (explicitRole) return explicitRole;
     const mappedRole = normalizeWorkflowRole(agent.workflowRole);
     if (mappedRole) return mappedRole;
 
-    const id = agentId.toLowerCase();
-    if (id.includes('scrum') || id.includes('sm')) {
+    const tokens = splitAgentIdTokens(agentId);
+    if (hasAnyRoleToken(tokens, ['scrum', 'scrummaster', 'sm', 'pm'])) {
         warnTinyEvent({
             type: 'workflow_role_heuristic_fallback',
             agentId,
             role: 'scrum_master',
             message: 'Role inferred by agentId heuristic',
-            metadata: { inferredFrom: 'agentId:scrum|sm' },
+            metadata: { inferredFrom: 'agentId-token:scrum|scrummaster|sm|pm' },
         });
         return 'scrum_master';
     }
-    if (id.includes('pm')) {
-        warnTinyEvent({
-            type: 'workflow_role_heuristic_fallback',
-            agentId,
-            role: 'scrum_master',
-            message: 'Role inferred by agentId heuristic',
-            metadata: { inferredFrom: 'agentId:pm' },
-        });
-        return 'scrum_master';
-    }
-    if (id.includes('coder') || id.includes('dev')) {
+    if (hasAnyRoleToken(tokens, ['coder', 'dev', 'developer'])) {
         warnTinyEvent({
             type: 'workflow_role_heuristic_fallback',
             agentId,
             role: 'coder',
             message: 'Role inferred by agentId heuristic',
-            metadata: { inferredFrom: 'agentId:coder|dev' },
+            metadata: { inferredFrom: 'agentId-token:coder|dev|developer' },
         });
         return 'coder';
     }
-    if (id.includes('review')) {
+    if (hasAnyRoleToken(tokens, ['review', 'reviewer'])) {
         warnTinyEvent({
             type: 'workflow_role_heuristic_fallback',
             agentId,
             role: 'reviewer',
             message: 'Role inferred by agentId heuristic',
-            metadata: { inferredFrom: 'agentId:review' },
+            metadata: { inferredFrom: 'agentId-token:review|reviewer' },
         });
         return 'reviewer';
     }
-    if (id.includes('test') || id.includes('qa')) {
+    if (hasAnyRoleToken(tokens, ['test', 'tester', 'qa'])) {
         warnTinyEvent({
             type: 'workflow_role_heuristic_fallback',
             agentId,
             role: 'tester',
             message: 'Role inferred by agentId heuristic',
-            metadata: { inferredFrom: 'agentId:test|qa' },
+            metadata: { inferredFrom: 'agentId-token:test|tester|qa' },
         });
         return 'tester';
     }
