@@ -27,8 +27,17 @@ function stripLeadingAppMention(text: string): string {
     return text.replace(/^\s*<@[A-Z0-9]+>\s*/i, '').trim();
 }
 
+function normalizeInlineSlackMentions(text: string): string {
+    // Slack may send mentions as <@U12345> or <@U12345|display_name>.
+    // Convert to @token form so mention routing can parse explicit mentions.
+    return text
+        .replace(/<@([A-Z0-9]+)\|([^>]+)>/gi, (_match, _id: string, label: string) => `@${label}`)
+        .replace(/<@([A-Z0-9]+)>/gi, (_match, id: string) => `@${id}`);
+}
+
 export function normalizeSlackMessageText(input: string): string {
-    return stripLeadingAppMention(input || '');
+    const withoutLeadingAppMention = stripLeadingAppMention(input || '');
+    return normalizeInlineSlackMentions(withoutLeadingAppMention);
 }
 
 export function buildSlackQueuePayload(event: SlackInboundMessage): SlackQueuePayload | null {
