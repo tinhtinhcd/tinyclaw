@@ -267,6 +267,23 @@ test('Role detection accepts explicit custom role names', () => {
     assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
 });
 
+
+test('Role detection heuristic token matching avoids substring false positives', () => {
+    emittedEvents.length = 0;
+    const roleFromDevice = detectWorkflowRole('device-monitor', {
+        name: 'Agent',
+        working_directory: '.',
+    });
+    assert.equal(roleFromDevice, 'unknown');
+
+    const roleFromAsmith = detectWorkflowRole('asmith', {
+        name: 'Agent',
+        working_directory: '.',
+    });
+    assert.equal(roleFromAsmith, 'unknown');
+    assert.equal(emittedEvents.some(e => e.type === 'role_detect.heuristic_fallback'), false);
+});
+
 test('Role detection maps workflow role pm to scrum_master before heuristics', () => {
     emittedEvents.length = 0;
     const role = detectWorkflowRole('dev-agent', {
